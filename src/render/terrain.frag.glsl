@@ -15,8 +15,9 @@ void main() {
   pixelAngle = 2.0 / (uResolution.y * uFocal);
   lodPixelAngle = 2.0 / (uLodHeight * uFocal);
 
-  sunCol = sunColor(uSunDir, 1.0);
-  sunColAloft = sunColor(uSunDir, RAYLEIGH_SCATTER_AIR);
+  sunCol = sunColor(uSunDir, 1.0, OZONE_GROUND);
+  sunColAloft = sunColor(uSunDir, RAYLEIGH_SCATTER_AIR, OZONE_ALOFT);
+  sunColLow = sunColor(uSunDir, exp(-uCamY / RAYLEIGH_HEIGHT), OZONE_GROUND);
   skyCol = skyIrradiance();
 
   vec2 uv = (2.0 * fragCoord - uResolution) / uResolution.y;
