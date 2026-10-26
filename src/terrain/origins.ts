@@ -1,6 +1,6 @@
 import { params } from '../params';
 import {
-  DUNE_CREST_WAVELENGTH, DUNE_LAYERS, DUNE_WARP_WAVELENGTH, FIELD_OCTAVES, FIELDS, MAX_OCTAVES, ROCK_WAVELENGTHS,
+  DUNE_LAYERS, DUNE_WARP_WAVELENGTH, FIELD_OCTAVES, FIELDS, MAX_OCTAVES, ROCK_WAVELENGTHS,
 } from './constants';
 
 // Précision à grande distance. Le shader travaille en float32, en coordonnées relatives à la caméra. Pour chaque
@@ -105,9 +105,10 @@ export function rockOrigins(x: number, z: number): RockOrigin {
 }
 
 /**
- * Facteurs d'échelle entiers (x, z) des dunes : ondulation, hauteur des crêtes, puis une paire par couche. Les
- * fréquences des dunes sont des multiples entiers de celle des biomes : le shader réutilise ainsi l'origine en
- * double précision du premier champ de biomes, au lieu d'en recevoir une par bruit.
+ * Facteurs d'échelle entiers (x, z) des dunes : ondulation, puis une paire par couche (x : crêtes ; z : bruits qui
+ * les décalent et modulent leur hauteur, à l'échelle de leur longueur). Les fréquences des dunes sont des multiples
+ * entiers de celle des biomes : le shader réutilise ainsi l'origine en double précision du premier champ de biomes,
+ * au lieu d'en recevoir une par bruit.
  */
 export function duneScales(): Uint32Array {
   const factors = (wavelength: number, stretch: number) => {
@@ -116,7 +117,6 @@ export function duneScales(): Uint32Array {
   };
   return new Uint32Array([
     ...factors(DUNE_WARP_WAVELENGTH, 1),
-    ...factors(DUNE_CREST_WAVELENGTH, 1),
     ...DUNE_LAYERS.flatMap((layer) => factors(layer.wavelength, layer.stretch)),
   ]);
 }

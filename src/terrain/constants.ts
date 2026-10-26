@@ -78,16 +78,26 @@ export const ROCK_WAVELENGTHS = [120, 48, 18, 7, 2.6, 1];
 
 // ---------- Dunes ----------
 
-/** Couches de dunes : écart entre crêtes (m), étirement le long des crêtes, hauteur (m). */
+/**
+ * Couches de dunes, de la plus grande à la plus petite (le shader s'arrête à la première trop fine) : écart entre
+ * crêtes (m), étirement le long des crêtes, hauteur maximale (m) et hauteur minimale relative (à 0, des crêtes
+ * s'interrompent). Méga-dunes, dunes, petites dunes.
+ */
 export const DUNE_LAYERS = [
-  { wavelength: 210, stretch: 4, height: 22 },
-  { wavelength: 50, stretch: 3, height: 4 },
+  { wavelength: 1600, stretch: 3, height: 150, lowest: 0.4 },
+  { wavelength: 210, stretch: 5, height: 20, lowest: 0.1 },
+  { wavelength: 50, stretch: 6, height: 4, lowest: 0.2 },
 ] as const;
-/** Ondulation des crêtes : longueur d'onde et amplitude (m). */
-export const DUNE_WARP_WAVELENGTH = 1200;
-export const DUNE_WARP = 250;
-/** Variation de la hauteur des crêtes : longueur d'onde (m). */
-export const DUNE_CREST_WAVELENGTH = 600;
+/** Pentes du versant au vent (10°) et de la face d'avalanche sous le vent (33°, angle de repos du sable). */
+export const DUNE_WINDWARD_SLOPE = Math.tan((10 * Math.PI) / 180);
+export const DUNE_LEE_SLOPE = Math.tan((33 * Math.PI) / 180);
+/** Ondulation commune des crêtes : longueur d'onde et amplitude (m). Faible : les cordons restent longilignes. */
+export const DUNE_WARP_WAVELENGTH = 2000;
+export const DUNE_WARP = 80;
+/** Décalage des crêtes de chaque couche, en fraction de leur écart, selon un bruit à l'échelle de leur longueur. */
+export const DUNE_SINUOSITY = 0.15;
+/** Pentes du relief entre lesquelles les dunes fondent en une nappe de sable, qui le borde en rampe. */
+export const DUNE_CONTACT_SLOPE = [0.08, 0.25];
 
 // ---------- Export vers le shader ----------
 
@@ -102,8 +112,8 @@ const GLSL_INTS: Record<string, number> = {
   FIELD_OCTAVES,
   ROCK_OCTAVES: ROCK_WAVELENGTHS.length,
   DUNE_LAYER_COUNT: DUNE_LAYERS.length,
-  // Facteurs d'échelle des dunes : ondulation, hauteur des crêtes, puis une paire par couche (voir duneScales)
-  DUNE_SCALE_COUNT: 2 + DUNE_LAYERS.length,
+  // Facteurs d'échelle des dunes : ondulation, puis une paire par couche (voir duneScales)
+  DUNE_SCALE_COUNT: 1 + DUNE_LAYERS.length,
 };
 
 const GLSL_FLOATS: Record<string, number | readonly number[]> = {
@@ -124,7 +134,13 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   SNOW_FLATTENING,
   ROCK_WAVELENGTHS,
   DUNE_HEIGHTS: DUNE_LAYERS.map((layer) => layer.height),
+  DUNE_LOWEST: DUNE_LAYERS.map((layer) => layer.lowest),
+  DUNE_MAX_HEIGHT: DUNE_LAYERS.reduce((sum, layer) => sum + layer.height, 0),
+  DUNE_WINDWARD_SLOPE,
+  DUNE_LEE_SLOPE,
   DUNE_WARP,
+  DUNE_SINUOSITY,
+  DUNE_CONTACT_SLOPE,
 };
 
 function glslFloat(value: number): string {

@@ -82,7 +82,14 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
   h += cliff.x;
   slope += cliff.yz;
   wallSlope = max(wallSlope, length(cliff.yz));
-  return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
+  if (sand <= 0.0) return h;
+  // Les dunes fondent contre le relief (pente des grandes formes, falaises comprises) ; elles peuvent surmonter une
+  // falaise, dont le sommet est relevé d'autant pour la distance
+  float contact = 1.0 - smoothstep(DUNE_CONTACT_SLOPE[0], DUNE_CONTACT_SLOPE[1], wallSlope);
+  vec3 dune = sand * dunes(x, uScale * exp2(-octaves), contact);
+  slope += dune.yz;
+  cliffFront.y += sand * DUNE_MAX_HEIGHT;
+  return h + dune.x;
 }
 
 float terrain(vec2 x, float octaves) {
