@@ -59,4 +59,3 @@ const float TMAX = 80000.0;
 float pixelAngle;
 float lodPixelAngle;
 vec3 sunCol;
-vec3 skyCol;

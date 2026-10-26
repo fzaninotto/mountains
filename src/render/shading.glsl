@@ -162,11 +162,11 @@ vec3 shadeTerrain(vec3 p, float t, int shadowSteps) {
   float dif = max(dot(n, uSunDir), 0.0);
   float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t, shadowSteps) : 0.0;
   // Les creux reçoivent moins de ciel et de lumière renvoyée
-  float occlusion = clamp(1.0 + 0.9 * s.cavity, 0.35, 1.0);
-  vec3 skyLight = skyCol * (0.5 + 0.5 * n.y) * occlusion;
+  float occlusion = clamp(1.0 + 0.6 * s.cavity, 0.55, 1.0);
+  vec3 skyLight = skyIrradiance(p.y, n) * occlusion;
   // Lumière renvoyée (albédo moyen d'environ 0,15) par le sol plat alentour, éclairé par le soleil et le ciel, et,
   // pour un versant tourné à l'opposé du soleil, par les versants d'en face qui reçoivent le soleil de face
-  vec3 ground = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyCol;
+  vec3 ground = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyIrradiance(p.y, vec3(0.0, 1.0, 0.0));
   vec3 antiSun = normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z) + vec3(1e-4, 0.0, 0.0));
   vec3 slopes = sunCol * SUN_IRRADIANCE * 0.8;
   vec3 bounce = (ground * clamp(0.5 - 0.5 * n.y, 0.0, 1.0) + slopes * max(dot(n, antiSun), 0.0)) * 0.15 * occlusion;
@@ -220,7 +220,7 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
 
   // Ce qu'on voit sous la surface : fond de sable plus ou moins absorbé (le rouge disparaît le premier), puis
   // la couleur propre de l'eau profonde
-  vec3 light = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * shadow + skyCol;
+  vec3 light = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * shadow + skyIrradiance(uWater, vec3(0.0, 1.0, 0.0));
   float depth = max(uWater - terrain(p.xz, lod(t)), 0.0);
   vec3 absorption = exp(-vec3(0.35, 0.09, 0.06) * depth * 1.6);
   vec3 below = vec3(0.4, 0.35, 0.25) * light * absorption + vec3(0.008, 0.03, 0.04) * light * (1.0 - absorption);

@@ -46,9 +46,11 @@ const vec2 OZONE_ALOFT = vec2(1.3, 0.00005);
 // diffuse les rayons rasants (lueur du couchant sur l'horizon) ; calculés une fois par pixel dans main()
 vec3 sunColAloft;
 vec3 sunColLow;
+// Soleil qui éclaire l'air sous l'horizon, entre l'œil et le sol : à mi-chemin de celui des basses couches, plus
+// rouge et plus faible qu'en altitude (sans quoi, soleil bas, cet air prend le pas sur le relief qu'il recouvre)
+vec3 sunColDown;
 
-// Anisotropie des aérosols utilisée par inScatter() : nulle pour l'éclairement venu du ciel, où le halo, très
-// étroit, serait mal estimé par quelques directions
+// Anisotropie des aérosols utilisée par inScatter() : réduite pour l'éclairement venu du ciel (SKY_AEROSOL_G)
 float aerosolG = AEROSOL_G;
 
 // Couleur du soleil après la traversée d'une part airScale de l'atmosphère (masse d'air de Kasten et Young)
@@ -72,7 +74,9 @@ vec3 inScatter(vec3 ro, vec3 rd, float t, float sunLit, out vec3 transmittance) 
   float phaseR = 0.0596831 * (1.0 + mu * mu);
   float g2 = aerosolG * aerosolG;
   float phaseA = 0.0795775 * (1.0 - g2) / pow(1.0 + g2 - 2.0 * aerosolG * mu, 1.5);
-  vec3 sunR = mix(sunColLow, sunColAloft, smoothstep(0.0, 0.1, rd.y));
+  vec3 sunR = rd.y < 0.0
+    ? mix(sunColDown, sunColLow, smoothstep(-0.1, 0.0, rd.y))
+    : mix(sunColLow, sunColAloft, smoothstep(0.0, 0.1, rd.y));
   vec3 lightR = sunR * (phaseR * SCATTER_INTENSITY * sunLit + MULTIPLE_SCATTERING);
   vec3 lightA = sunCol * (phaseA * SCATTER_INTENSITY * AEROSOL_ALBEDO * sunLit + MULTIPLE_SCATTERING);
   vec3 tau = tauR + tauA;
@@ -118,18 +122,33 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t, float shaded) {
   return col * transmittance + scattered;
 }
 
-// Éclairement moyen venu du ciel, pour la lumière ambiante : moyenne de quelques directions de l'hémisphère, avec
-// une diffusion isotrope des aérosols. Le disque solaire en est exclu : le soleil direct est compté à part, et il
-// tomberait sinon dans l'une de ces directions (hauteur de 19° ou de 90°) et surexposerait toute l'image
-vec3 skyIrradiance() {
-  aerosolG = 0.0;
+// Anisotropie des aérosols pour l'éclairement venu du ciel : le halo, très étroit, serait mal estimé par quelques
+// directions, mais le ciel reste plus clair du côté du soleil
+const float SKY_AEROSOL_G = 0.7;
+
+// Éclairement venu du ciel reçu à l'altitude y par une surface de normale n : quelques directions de l'hémisphère
+// (zénith, puis à 19° de hauteur vers le soleil, à l'opposé et de part et d'autre), pondérées selon leur angle avec
+// la normale. Une face tournée vers le soleil caché voit ainsi le ciel lumineux de ce côté. L'air est pris à
+// l'altitude du sol éclairé et non à celle de l'œil : vu d'avion, le sol reçoit toujours le ciel de sa propre
+// altitude. Le disque solaire en est exclu : le soleil direct est compté à part
+vec3 skyIrradiance(float y, vec3 n) {
+  aerosolG = SKY_AEROSOL_G;
+  vec3 ro = vec3(0.0, max(y, 0.0), 0.0);
   vec3 side = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(1e-4, 0.0, 0.0));
   vec3 across = vec3(-side.z, 0.0, side.x);
-  vec3 sum = skyScatter(vec3(0.0, 1.0, 0.0), 0.0);
-  sum += skyScatter(normalize(side + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += skyScatter(normalize(-side + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += skyScatter(normalize(across + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += skyScatter(normalize(-across + vec3(0.0, 0.35, 0.0)), 0.0);
+  vec3 dirs[5] = vec3[5](
+    vec3(0.0, 1.0, 0.0),
+    normalize(side + vec3(0.0, 0.35, 0.0)),
+    normalize(-side + vec3(0.0, 0.35, 0.0)),
+    normalize(across + vec3(0.0, 0.35, 0.0)),
+    normalize(-across + vec3(0.0, 0.35, 0.0))
+  );
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 5; i++) {
+    vec3 transmittance;
+    sum += inScatter(ro, dirs[i], 1e7, 1.0, transmittance) * max(dot(n, dirs[i]) + 0.5, 0.0);
+  }
   aerosolG = AEROSOL_G;
-  return sum / 5.0 * 2.0;
+  // Le sol plat reçoit 2,5 fois la luminance moyenne de ces directions (poids total 4,8)
+  return sum * 0.52;
 }

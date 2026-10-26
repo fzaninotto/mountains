@@ -12,6 +12,10 @@ const float VIGNETTE = 0.3;
 // couchant le sol reste lisible)
 const float DAYLIGHT_REF = 0.5;
 const float EXPOSURE_ADAPT = 0.6;
+// Altitude (m) au-delà de laquelle ce sol de référence n'est plus pris sous l'œil : vu d'avion, on regarde le sol
+const float GROUND_REF = 2000.0;
+// Gain d'exposition supplémentaire quand on regarde vers un soleil bas
+const float BACKLIGHT_ADAPT = 0.6;
 // Amplitude du grain, qui sert aussi de tramage contre les aplats en escalier
 const float GRAIN = 1.0 / 255.0;
 
@@ -24,9 +28,15 @@ void main() {
   sunColAloft = sunColor(uSunDir, RAYLEIGH_SCATTER_AIR, OZONE_ALOFT);
   // La lueur rasante n'existe que soleil bas : plus haut, l'horizon est éclairé comme le reste du ciel
   sunColLow = mix(sunColor(uSunDir, exp(-uCamY / RAYLEIGH_HEIGHT), OZONE_GROUND), sunColAloft, smoothstep(0.03, 0.15, uSunDir.y));
-  skyCol = skyIrradiance();
-  float daylight = dot(sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyCol, vec3(0.2126, 0.7152, 0.0722));
+  sunColDown = sunColor(uSunDir, mix(exp(-min(uCamY, GROUND_REF) / RAYLEIGH_HEIGHT), RAYLEIGH_SCATTER_AIR, 0.5), OZONE_GROUND);
+  vec3 flatGround = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyIrradiance(min(uCamY, GROUND_REF), vec3(0.0, 1.0, 0.0));
+  float daylight = dot(flatGround, vec3(0.2126, 0.7152, 0.0722));
   float exposure = uExposure * clamp(pow(DAYLIGHT_REF / daylight, EXPOSURE_ADAPT), 0.4, 4.0);
+  // À contre-jour, on regarde surtout des faces à l'ombre : l'œil s'y adapte en partie
+  vec3 forward = uCamRot[2];
+  float backlit = smoothstep(0.2, 0.9, dot(normalize(forward.xz + 1e-6), normalize(uSunDir.xz + 1e-6)))
+    * (1.0 - smoothstep(0.2, 0.5, uSunDir.y));
+  exposure *= 1.0 + BACKLIGHT_ADAPT * backlit;
 
   vec2 uv = (2.0 * fragCoord - uResolution) / uResolution.y;
   vec3 rd = normalize(uCamRot * vec3(uv, uFocal));

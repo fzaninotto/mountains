@@ -48,7 +48,7 @@ export const params: Params = {
   snow: 2000,
   sunElevation: 12,
   sunAzimuth: 250,
-  fog: 0.4,
+  fog: 0.3,
   exposure: 1.1,
   fov: 55,
   speed: 300,
