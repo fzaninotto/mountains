@@ -1,27 +1,35 @@
-export const MAX_OCTAVES = 20;
+// Réglages modifiables depuis le panneau (gui.ts). Les constantes internes du relief sont dans terrain/constants.ts.
 
 export interface Params {
+  // Monde
   seed: number;
+  // Relief : longueur d'onde de la plus grande octave (m), amplitude (m) et rugosité de la haute montagne
   scale: number;
   height: number;
   gain: number;
+  // Biomes : taille (m) et parts de montagne et de désert (0 à 1)
   biomeScale: number;
   mountainCoverage: number;
   desertCoverage: number;
+  // Raymarching : plus petit détail calculé (px) et fraction de la distance avancée à chaque pas
   detail: number;
   step: number;
+  // Altitudes (m) de l'eau, de la limite de végétation et de la limite des neiges
   water: number;
   vegetation: number;
   snow: number;
+  // Éclairage et caméra : soleil (degrés), densité de brume, exposition, champ de vision vertical (degrés)
   sunElevation: number;
   sunAzimuth: number;
   fog: number;
   exposure: number;
   fov: number;
+  // Navigation et qualité : vitesse (m/s), cadence visée et résolution max en mouvement, densité de pixels
   speed: number;
-  movingScale: number;
   targetFps: number;
+  movingScale: number;
   pixelRatio: number;
+  // Export : facteur de taille de l'image par rapport à l'écran
   exportScale: number;
 }
 
@@ -44,53 +52,15 @@ export const params: Params = {
   exposure: 0.75,
   fov: 55,
   speed: 300,
-  movingScale: 0.5,
   targetFps: 30,
-  pixelRatio: Math.min(window.devicePixelRatio, 2),
+  movingScale: 0.5,
+  pixelRatio: Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio, 2),
   exportScale: 2,
 };
 
-// Un biome règle le relief : altitude de base, amplitude du fBm et rugosité (gain entre octaves)
-export interface Biome {
-  base: number;
-  amplitude: number;
-  gain: number;
-}
-
-const PLAIN: Biome = { base: 0, amplitude: 120, gain: 0.42 };
-const HILLS: Biome = { base: 150, amplitude: 380, gain: 0.4 };
-const MIDDLE_MOUNTAINS: Biome = { base: 450, amplitude: 950, gain: 0.47 };
-
-// Biomes ordonnés le long du niveau de relief : mer, plage, plaine, collines, moyenne montagne, haute montagne
-export const BIOME_STOPS = [0, 0.2, 0.3, 0.45, 0.68, 1];
-
-export function biomes(): Biome[] {
-  return [
-    { base: params.water - 150, amplitude: 120, gain: 0.45 },
-    { base: params.water + 4, amplitude: 30, gain: 0.45 },
-    PLAIN,
-    HILLS,
-    MIDDLE_MOUNTAINS,
-    { base: 1200, amplitude: params.height, gain: params.gain },
-  ];
-}
-
-// Décalent les champs de biomes pour couvrir plus ou moins de surface en montagne ou en désert
-export function mountainBias(): number {
-  return (params.mountainCoverage - 0.5) * 1.2;
-}
-
-export function desertBias(): number {
-  return (params.desertCoverage - 0.5) * 1.2;
-}
-
+/** Direction vers le soleil (vecteur unitaire, y vers le haut, azimut 0 vers -z). */
 export function sunDirection(): [number, number, number] {
   const elevation = (params.sunElevation * Math.PI) / 180;
   const azimuth = (params.sunAzimuth * Math.PI) / 180;
   return [Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), -Math.cos(elevation) * Math.cos(azimuth)];
-}
-
-// Borne haute du relief : base plus somme des amplitudes de toutes les octaves pour le biome le plus haut, plus les dunes et les falaises
-export function maxTerrainHeight(): number {
-  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 100;
 }

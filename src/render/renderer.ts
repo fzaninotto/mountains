@@ -1,10 +1,20 @@
 import vertexSource from './fullscreen.vert.glsl?raw';
-import terrainSource from './terrain.frag.glsl?raw';
 import blitSource from './blit.frag.glsl?raw';
-import { biomes, desertBias, maxTerrainHeight, mountainBias, params, sunDirection } from './params';
-import type { View } from './camera';
-import { duneScales } from './noise';
+import uniformsSource from './uniforms.glsl?raw';
+import noiseSource from './noise.glsl?raw';
+import climateSource from './climate.glsl?raw';
+import rockSource from './rock.glsl?raw';
+import heightSource from './height.glsl?raw';
+import raymarchSource from './raymarch.glsl?raw';
+import shadingSource from './shading.glsl?raw';
+import mainSource from './terrain.frag.glsl?raw';
+import { params, sunDirection } from '../params';
+import type { View } from '../camera';
+import { glslConstants } from '../terrain/constants';
+import { biomes, desertBias, maxTerrainHeight, mountainBias } from '../terrain/biomes';
+import { duneScales } from '../terrain/dunes';
 
+/** Image intermédiaire : texture et framebuffer qui la cible. */
 export interface Target {
   texture: WebGLTexture;
   framebuffer: WebGLFramebuffer;
@@ -12,37 +22,60 @@ export interface Target {
   height: number;
 }
 
+// Le shader de terrain est assemblé à partir de modules, précédés des constantes partagées avec le CPU
+const TERRAIN_SOURCE = [
+  '#version 300 es',
+  'precision highp float;',
+  'precision highp int;',
+  glslConstants(),
+  uniformsSource,
+  noiseSource,
+  climateSource,
+  rockSource,
+  heightSource,
+  raymarchSource,
+  shadingSource,
+  mainSource,
+].join('\n');
+
 const TERRAIN_UNIFORMS = [
-  'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uBiomes', 'uBiomeScale', 'uMountainBias',
-  'uDesertBias', 'uFieldFrac', 'uFieldCell', 'uDuneScale', 'uRockFrac', 'uRockCell', 'uRockRot',
-  'uMaxH', 'uDetail', 'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell',
-  'uMatFrac', 'uMatCell',
+  'uResolution', 'uCamY', 'uCamRot', 'uFocal',
+  'uSunDir', 'uScale', 'uBiomeScale', 'uMountainBias', 'uDesertBias', 'uDetail', 'uStep', 'uWater', 'uVegetation',
+  'uSnow', 'uFog', 'uExposure', 'uBiomes', 'uMaxH',
+  'uOctFrac', 'uOctCell', 'uFieldFrac', 'uFieldCell', 'uRockFrac', 'uRockCell', 'uRockRot', 'uDuneScale',
 ] as const;
 
 type TerrainUniforms = Record<(typeof TERRAIN_UNIFORMS)[number], WebGLUniformLocation | null>;
 
+/**
+ * Rendu WebGL2 : le terrain est calculé entièrement dans un shader plein écran (raymarching), dans des cibles
+ * intermédiaires ensuite copiées à l'écran avec mise à l'échelle.
+ */
 export class Renderer {
+  /** Taille maximale d'une cible, pour l'export. */
   readonly maxSize: number;
   private readonly gl: WebGL2RenderingContext;
   private readonly terrainProgram: WebGLProgram;
+  private readonly uniforms: TerrainUniforms;
   private readonly blitProgram: WebGLProgram;
   private readonly sourceScale: WebGLUniformLocation | null;
-  private readonly uniforms: TerrainUniforms;
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
     if (!gl) throw new Error('WebGL2 non disponible');
     this.gl = gl;
     this.maxSize = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0]);
-    this.terrainProgram = this.createProgram(terrainSource);
-    this.blitProgram = this.createProgram(blitSource);
-    this.sourceScale = gl.getUniformLocation(this.blitProgram, 'uSourceScale');
+    this.terrainProgram = this.createProgram(TERRAIN_SOURCE);
     this.uniforms = Object.fromEntries(
       TERRAIN_UNIFORMS.map((name) => [name, gl.getUniformLocation(this.terrainProgram, name)]),
     ) as TerrainUniforms;
+    this.blitProgram = this.createProgram(blitSource);
+    this.sourceScale = gl.getUniformLocation(this.blitProgram, 'uSourceScale');
+    // Le triangle plein écran est généré par gl_VertexID : aucun tampon, mais WebGL2 exige un VAO lié
     gl.bindVertexArray(gl.createVertexArray());
   }
 
+  /** Renvoie une cible de la taille demandée, en réutilisant `target` si elle convient déjà. */
   ensureTarget(target: Target | null, width: number, height: number): Target {
     if (target && target.width === width && target.height === height) return target;
     const gl = this.gl;
@@ -63,51 +96,26 @@ export class Renderer {
     return { texture, framebuffer, width, height };
   }
 
-  // Ne calcule que les lignes [y0, y1[ : permet d'étaler une image nette sur plusieurs frames
-  // width × height : portion de la cible utilisée (le coin inférieur gauche), toute la cible par défaut
+  /**
+   * Calcule les lignes [y0, y1[ de l'image : une image nette peut ainsi être étalée sur plusieurs frames.
+   * width × height : portion utilisée de la cible (coin inférieur gauche), toute la cible par défaut.
+   */
   renderRows(target: Target, view: View, y0: number, y1: number, width = target.width, height = target.height) {
     const gl = this.gl;
-    const u = this.uniforms;
     gl.useProgram(this.terrainProgram);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
     gl.viewport(0, 0, width, height);
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(0, y0, width, y1 - y0);
-
-    gl.uniform2f(u.uResolution, width, height);
-    gl.uniform1f(u.uCamY, view.camY);
-    gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
-    gl.uniform1f(u.uFocal, view.focal);
-    gl.uniform3fv(u.uSunDir, sunDirection());
-    gl.uniform1f(u.uScale, params.scale);
-    gl.uniform3fv(u.uBiomes, biomes().flatMap((b) => [b.base, b.amplitude, b.gain]));
-    gl.uniform1f(u.uBiomeScale, params.biomeScale);
-    gl.uniform1f(u.uMountainBias, mountainBias());
-    gl.uniform1f(u.uDesertBias, desertBias());
-    gl.uniform1f(u.uMaxH, maxTerrainHeight());
-    gl.uniform1f(u.uDetail, params.detail);
-    gl.uniform1f(u.uStep, params.step);
-    gl.uniform1f(u.uWater, params.water);
-    gl.uniform1f(u.uVegetation, params.vegetation);
-    gl.uniform1f(u.uSnow, params.snow);
-    gl.uniform1f(u.uFog, params.fog * 1e-4);
-    gl.uniform1f(u.uExposure, params.exposure);
-    gl.uniform2fv(u.uOctFrac, view.octaves.frac);
-    gl.uniform2uiv(u.uOctCell, view.octaves.cell);
-    gl.uniform2fv(u.uMatFrac, view.material.frac);
-    gl.uniform2uiv(u.uMatCell, view.material.cell);
-    gl.uniform2fv(u.uFieldFrac, view.fields.frac);
-    gl.uniform2uiv(u.uFieldCell, view.fields.cell);
-    gl.uniform3fv(u.uRockFrac, view.rock.frac);
-    gl.uniform3uiv(u.uRockCell, view.rock.cell);
-    gl.uniformMatrix3fv(u.uRockRot, false, view.rock.rotation);
-    gl.uniform2uiv(u.uDuneScale, duneScales());
-
+    this.setTerrainUniforms(view, width, height);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
   }
 
-  // Copie (une portion d')une cible vers une autre avec mise à l'échelle, ou vers l'écran si destination est null
+  /**
+   * Copie une cible vers une autre avec mise à l'échelle, ou vers l'écran si `destination` est null.
+   * sourceWidth × sourceHeight : portion utilisée de la source.
+   */
   copy(source: Target, destination: Target | null, sourceWidth = source.width, sourceHeight = source.height) {
     const gl = this.gl;
     gl.useProgram(this.blitProgram);
@@ -117,6 +125,43 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, source.texture);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  private setTerrainUniforms(view: View, width: number, height: number) {
+    const gl = this.gl;
+    const u = this.uniforms;
+
+    // Caméra
+    gl.uniform2f(u.uResolution, width, height);
+    gl.uniform1f(u.uCamY, view.camY);
+    gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
+    gl.uniform1f(u.uFocal, view.focal);
+
+    // Réglages
+    gl.uniform3fv(u.uSunDir, sunDirection());
+    gl.uniform1f(u.uScale, params.scale);
+    gl.uniform1f(u.uBiomeScale, params.biomeScale);
+    gl.uniform1f(u.uMountainBias, mountainBias());
+    gl.uniform1f(u.uDesertBias, desertBias());
+    gl.uniform1f(u.uDetail, params.detail);
+    gl.uniform1f(u.uStep, params.step);
+    gl.uniform1f(u.uWater, params.water);
+    gl.uniform1f(u.uVegetation, params.vegetation);
+    gl.uniform1f(u.uSnow, params.snow);
+    gl.uniform1f(u.uFog, params.fog * 1e-4);
+    gl.uniform1f(u.uExposure, params.exposure);
+    gl.uniform3fv(u.uBiomes, biomes().flatMap((b) => [b.base, b.amplitude, b.gain]));
+    gl.uniform1f(u.uMaxH, maxTerrainHeight());
+
+    // Origines des bruits à la position de la caméra
+    gl.uniform2fv(u.uOctFrac, view.octaves.frac);
+    gl.uniform2uiv(u.uOctCell, view.octaves.cell);
+    gl.uniform2fv(u.uFieldFrac, view.fields.frac);
+    gl.uniform2uiv(u.uFieldCell, view.fields.cell);
+    gl.uniform3fv(u.uRockFrac, view.rock.frac);
+    gl.uniform3uiv(u.uRockCell, view.rock.cell);
+    gl.uniformMatrix3fv(u.uRockRot, false, view.rock.rotation);
+    gl.uniform2uiv(u.uDuneScale, duneScales());
   }
 
   private createProgram(fragmentSource: string): WebGLProgram {

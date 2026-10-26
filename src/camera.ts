@@ -1,23 +1,29 @@
 import { params } from './params';
-import {
-  fieldOrigins, gridOrigin, MATERIAL_SCALE, octaveOrigins, rockOrigins, terrainHeight, type NoiseOrigin, type RockOrigin,
-} from './noise';
+import { terrainHeight } from './terrain/height';
+import { fieldOrigins, octaveOrigins, rockOrigins, type NoiseOrigin, type RockOrigin } from './terrain/origins';
 
+/** Tout ce dont le shader a besoin pour dessiner la vue courante. */
 export interface View {
   camY: number;
+  /** Repère de la caméra (droite, haut, avant), en colonnes. */
   rotation: Float32Array;
+  /** Distance focale pour un écran de hauteur 2 (1 / tan(fov / 2)). */
   focal: number;
   octaves: NoiseOrigin;
-  material: NoiseOrigin;
   fields: NoiseOrigin;
   rock: RockOrigin;
 }
 
+/** Hauteur minimale au-dessus du sol (m). */
 const CLEARANCE = 2;
 const MAX_PITCH = 1.45;
 export const MIN_SPEED = 2;
 export const MAX_SPEED = 20000;
 
+/**
+ * Caméra de vol libre : glisser pour regarder, ZQSD / WASD et flèches pour avancer, R / Espace et F pour monter
+ * et descendre, Maj pour accélérer, molette pour régler la vitesse.
+ */
 export class FlyCamera {
   x = 0;
   y = 0;
@@ -49,6 +55,7 @@ export class FlyCamera {
     }, { passive: false });
   }
 
+  /** Altitude du sol, ou de l'eau, sous la caméra. */
   ground(): number {
     return Math.max(terrainHeight(this.x, this.z), params.water);
   }
@@ -61,12 +68,13 @@ export class FlyCamera {
     this.y = Math.max(this.y, this.ground() + CLEARANCE);
   }
 
+  /** Vitesse courante (m/s), Maj comprise. */
   speed(): number {
     const boost = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 5 : 1;
     return params.speed * boost;
   }
 
-  // Renvoie true si la vue a changé
+  /** Applique les touches enfoncées pendant dt secondes ; renvoie true si la vue a changé. */
   update(dt: number): boolean {
     const axis = (plus: string[], minus: string[]) =>
       Number(plus.some((k) => this.keys.has(k))) - Number(minus.some((k) => this.keys.has(k)));
@@ -97,7 +105,6 @@ export class FlyCamera {
       rotation: new Float32Array([...r, ...u, ...f]),
       focal: 1 / Math.tan((params.fov * Math.PI) / 360),
       octaves: octaveOrigins(this.x, this.z),
-      material: gridOrigin(this.x, this.z, MATERIAL_SCALE),
       fields: fieldOrigins(this.x, this.z),
       rock: rockOrigins(this.x, this.z),
     };

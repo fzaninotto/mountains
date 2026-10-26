@@ -1,0 +1,54 @@
+import { params } from '../params';
+import { BIOME_STOPS } from './constants';
+import { smoothstep } from './noise';
+
+/** Un biome règle le relief : altitude de base (m), amplitude du fBm (m) et rugosité (gain entre octaves). */
+export interface Biome {
+  base: number;
+  amplitude: number;
+  gain: number;
+}
+
+const PLAIN: Biome = { base: 0, amplitude: 120, gain: 0.42 };
+const HILLS: Biome = { base: 150, amplitude: 380, gain: 0.4 };
+const MIDDLE_MOUNTAINS: Biome = { base: 450, amplitude: 950, gain: 0.47 };
+
+/** Biomes dans l'ordre de BIOME_STOPS. La mer et la plage suivent le niveau de l'eau, la haute montagne les réglages. */
+export function biomes(): Biome[] {
+  return [
+    { base: params.water - 150, amplitude: 120, gain: 0.45 },
+    { base: params.water + 4, amplitude: 30, gain: 0.45 },
+    PLAIN,
+    HILLS,
+    MIDDLE_MOUNTAINS,
+    { base: 1200, amplitude: params.height, gain: params.gain },
+  ];
+}
+
+/** Biome interpolé en continu le long du niveau de relief : aucune frontière entre deux biomes. */
+export function biomeAt(level: number): Biome {
+  const list = biomes();
+  const result = { ...list[0] };
+  for (let i = 0; i < list.length - 1; i++) {
+    const t = smoothstep(BIOME_STOPS[i], BIOME_STOPS[i + 1], level);
+    result.base += (list[i + 1].base - result.base) * t;
+    result.amplitude += (list[i + 1].amplitude - result.amplitude) * t;
+    result.gain += (list[i + 1].gain - result.gain) * t;
+  }
+  return result;
+}
+
+/** Décalage du champ des chaînes de montagnes selon la part de montagne voulue. */
+export function mountainBias(): number {
+  return (params.mountainCoverage - 0.5) * 1.2;
+}
+
+/** Décalage du champ d'aridité selon la part de désert voulue. */
+export function desertBias(): number {
+  return (params.desertCoverage - 0.5) * 1.2;
+}
+
+/** Borne haute du relief : base plus somme des amplitudes de toutes les octaves du biome le plus haut, plus dunes et falaises. */
+export function maxTerrainHeight(): number {
+  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 100;
+}

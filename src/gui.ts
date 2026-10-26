@@ -2,8 +2,11 @@ import GUI from 'lil-gui';
 import { params } from './params';
 import { MAX_SPEED, MIN_SPEED } from './camera';
 
+/** Réactions de l'application aux réglages et boutons du panneau. */
 interface Actions {
+  /** Un réglage de rendu a changé : il faut redessiner. */
   viewChanged(): void;
+  /** Le relief a changé : il faut aussi replacer la caméra au-dessus du sol. */
   terrainChanged(): void;
   newSeed(): void;
   teleport(): void;
