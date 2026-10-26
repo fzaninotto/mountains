@@ -41,8 +41,9 @@ const float MATERIAL_SCALE = 350.0;
 const float ROCK_WAVELENGTH[4] = float[4](48.0, 14.0, 4.0, 1.2);
 const float ROCK_WEIGHT[4] = float[4](0.4, 0.3, 0.2, 0.1);
 // Profondeur maximale du creusement, relative à la longueur d'onde, et pente à partir de laquelle on creuse
+// Le creusement n'utilise pas l'octave de 48 m : assez profonde pour percer les arêtes fines
 const float ROCK_CARVE = 0.22;
-const float ROCK_CARVE_MAX = 0.22 * (48.0 + 14.0 + 4.0 + 1.2);
+const float ROCK_CARVE_MAX = 0.22 * (14.0 + 4.0 + 1.2);
 // Le creusement est pentu : sur les parois, la distance est réduite d'autant pour que les rayons ne la traversent pas
 const float ROCK_CARVE_LIPSCHITZ = 2.0;
 const vec2 WALL_SLOPE = vec2(0.45, 0.9);
@@ -52,11 +53,8 @@ const float TMAX = 80000.0;
 const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
 const vec2 STEEP_SLOPE = vec2(0.25, 0.6);
-const float ROCK_ROUGHNESS = 1.25;
-const float RIDGE_WAVELENGTH = 400.0;
-const float STRATA_THICKNESS = 30.0;
-const float STRATA_TILT = 40.0;
-const float STRATA_STRENGTH = 0.35;
+const float ROCK_ROUGHNESS = 1.15;
+const float RIDGE_WAVELENGTH = 120.0;
 const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
 const int FIELD_OCTAVES = 3;
 const float FIELD_RATIO[4] = float[4](1.0, 1.37, 0.55, 0.12);
@@ -126,7 +124,7 @@ float rockFade(int i, float footprint) {
 // Profondeur (positive) dont la paroi est creusée : la surface ne fait que reculer, jamais avancer
 float rockCarve(vec3 p, float footprint) {
   float carve = 0.0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 1; i < 4; i++) {
     float fade = rockFade(i, footprint);
     if (fade <= 0.0) break;
     // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête vive, comme une roche fracturée
@@ -148,18 +146,6 @@ float rockStain(vec3 p, float footprint) {
 
 float steepness(float slope) {
   return smoothstep(STEEP_SLOPE.x, STEEP_SLOPE.y, slope);
-}
-
-// Strates : sur les pentes raides, la roche se débite en corniches de STRATA_THICKNESS mètres,
-// légèrement inclinées ; effacées quand elles deviennent plus fines que quelques pixels
-float strata(float h, float steep, vec2 x, float minWavelength) {
-  float fade = steep * smoothstep(minWavelength, 4.0 * minWavelength, STRATA_THICKNESS);
-  if (fade <= 0.0) return 0.0;
-  float tilt = STRATA_TILT * noised(uMatFrac + x / MATERIAL_SCALE, uMatCell).x;
-  float layer = (h + tilt) / STRATA_THICKNESS;
-  float f = fract(layer);
-  float stepped = (floor(layer) + f * f) * STRATA_THICKNESS - tilt;
-  return fade * STRATA_STRENGTH * (stepped - h);
 }
 
 // La neige comble les petits reliefs sur les zones peu pentues au-dessus de la limite des neiges
@@ -285,7 +271,6 @@ float terrainG(vec2 x, float octaves, out vec2 slope) {
   }
   slope = height * grad;
   float h = base + height * a;
-  h += strata(h, steepness(length(slope)), x, uScale * exp2(-octaves));
   h += cliffLift(h, c.z);
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
@@ -310,7 +295,8 @@ float surfaceDistance(vec3 p, float t) {
   if (wall <= 0.0) return dy;
   float e = mix(dy, dy / sqrt(1.0 + dot(slope, slope)), wall);
   if (e >= ROCK_CARVE_MAX) return e;
-  return (e + wall * rockCarve(p, t * pixelAngle * uDetail)) / (1.0 + ROCK_CARVE_LIPSCHITZ * wall);
+  // Empreinte doublée : les parois sont souvent vues de biais, où un pixel couvre bien plus de roche
+  return (e + wall * rockCarve(p, 2.0 * t * pixelAngle * uDetail)) / (1.0 + ROCK_CARVE_LIPSCHITZ * wall);
 }
 
 // ---------- Raymarching ----------

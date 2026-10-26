@@ -7,13 +7,10 @@ export const GROUND_OCTAVES = 16;
 const SNOW_SMOOTH_WAVELENGTH = 60;
 const SNOW_FLATTENING = 0.85;
 const STEEP_SLOPE = [0.25, 0.6];
-const ROCK_ROUGHNESS = 1.25;
+const ROCK_ROUGHNESS = 1.15;
 const WALL_SLOPE = [0.45, 0.9];
 const WALL_DETAIL_WAVELENGTH = 150;
-const RIDGE_WAVELENGTH = 400;
-const STRATA_THICKNESS = 30;
-const STRATA_TILT = 40;
-const STRATA_STRENGTH = 0.35;
+const RIDGE_WAVELENGTH = 120;
 
 // Champs de biomes à très grande échelle : continent, aridité, chaînes de montagnes.
 // Chacun est un fBm de quelques octaves tournées, à une échelle relative à la taille des biomes
@@ -125,19 +122,6 @@ const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
-
-// Strates : sur les pentes raides, la roche se débite en corniches de STRATA_THICKNESS mètres,
-// légèrement inclinées ; effacées quand elles deviennent plus fines que quelques pixels
-function strata(h: number, steep: number, x: number, z: number, minWavelength: number): number {
-  const fade = steep * smoothstep(minWavelength, 4 * minWavelength, STRATA_THICKNESS);
-  if (fade <= 0) return 0;
-  const [ox, oy] = seedOffset();
-  const tilt = STRATA_TILT * noised(x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy)[0];
-  const layer = (h + tilt) / STRATA_THICKNESS;
-  const f = layer - Math.floor(layer);
-  const stepped = (Math.floor(layer) + f * f) * STRATA_THICKNESS - tilt;
-  return fade * STRATA_STRENGTH * (stepped - h);
-}
 
 function snowSmoothing(h: number, slope: number): number {
   return SNOW_FLATTENING * smoothstep(params.snow - 100, params.snow + 150, h) * (1 - smoothstep(0.35, 0.7, slope));
@@ -270,8 +254,7 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     wavelength /= 2;
   }
   const minWavelength = params.scale * 2 ** -octaves;
-  const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], height * Math.hypot(gradX, gradZ));
-  const h = base + height * a + strata(base + height * a, steep, x, z, minWavelength);
+  const h = base + height * a;
   return h + cliffLift(h, cliff) + sand * dunes(x, z, minWavelength);
 }
 
