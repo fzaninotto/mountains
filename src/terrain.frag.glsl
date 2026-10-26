@@ -38,6 +38,8 @@ const float TMAX = 80000.0;
 // Identiques à noise.ts
 const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
+const vec2 STEEP_SLOPE = vec2(0.35, 0.8);
+const float ROCK_ROUGHNESS = 1.5;
 const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
 const int FIELD_OCTAVES = 3;
 const float FIELD_RATIO[4] = float[4](1.0, 1.37, 0.55, 0.12);
@@ -74,6 +76,10 @@ vec3 noised(vec2 x, uvec2 cell) {
     -1.0 + 2.0 * (a + k1 * u.x + k2 * u.y + k4 * u.x * u.y),
     2.0 * du * vec2(k1 + k4 * u.y, k2 + k4 * u.x)
   );
+}
+
+float steepness(float slope) {
+  return smoothstep(STEEP_SLOPE.x, STEEP_SLOPE.y, slope);
 }
 
 // La neige comble les petits reliefs sur les zones peu pentues au-dessus de la limite des neiges
@@ -178,7 +184,10 @@ float terrain(vec2 x, float octaves) {
     if (w <= 0.0) break;
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
     d += n.yz;
-    float amplitude = w * b / (1.0 + dot(d, d));
+    // L'atténuation par les dérivées imite l'érosion (vallées, versants doux) ; sur les pentes raides,
+    // la roche reste à nu : on rend leur détail aux petites octaves, et un peu plus
+    float erosion = 1.0 / (1.0 + dot(d, d));
+    float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steepness(height * length(grad)));
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(base + height * a, height * length(grad));
     a += amplitude * n.x;
     grad += amplitude * (transpose(jacobian) * n.yz);

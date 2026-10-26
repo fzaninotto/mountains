@@ -6,6 +6,8 @@ export const MATERIAL_SCALE = 350;
 export const GROUND_OCTAVES = 16;
 const SNOW_SMOOTH_WAVELENGTH = 60;
 const SNOW_FLATTENING = 0.85;
+const STEEP_SLOPE = [0.35, 0.8];
+const ROCK_ROUGHNESS = 1.5;
 
 // Champs de biomes à très grande échelle : continent, aridité, chaînes de montagnes.
 // Chacun est un fBm de quelques octaves tournées, à une échelle relative à la taille des biomes
@@ -187,7 +189,11 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     const [v, nx, nz] = noised(qx, qz, ox, oy);
     dx += nx;
     dz += nz;
-    let amplitude = b / (1 + dx * dx + dz * dz);
+    // L'atténuation par les dérivées imite l'érosion (vallées, versants doux) ; sur les pentes raides,
+    // la roche reste à nu : on rend leur détail aux petites octaves, et un peu plus
+    const erosion = 1 / (1 + dx * dx + dz * dz);
+    const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], height * Math.hypot(gradX, gradZ));
+    let amplitude = b * (erosion + (ROCK_ROUGHNESS - erosion) * steep);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) {
       amplitude *= 1 - snowSmoothing(base + height * a, height * Math.hypot(gradX, gradZ));
     }
