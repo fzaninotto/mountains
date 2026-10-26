@@ -33,8 +33,8 @@ export class FlyCamera {
     element.addEventListener('pointermove', (e) => {
       if (!element.hasPointerCapture(e.pointerId)) return;
       const sensitivity = ((params.fov * Math.PI) / 180) / window.innerHeight;
-      this.yaw += e.movementX * sensitivity;
-      this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch - e.movementY * sensitivity));
+      this.yaw -= e.movementX * sensitivity;
+      this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch + e.movementY * sensitivity));
       this.looked = true;
     });
     element.addEventListener('wheel', (e) => {
