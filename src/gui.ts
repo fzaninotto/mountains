@@ -36,7 +36,7 @@ export function createGui(actions: Actions): GUI {
 
   const quality = gui.addFolder('Navigation et qualité');
   quality.add(params, 'speed', 0.02, 20, 0.01).name('Vitesse').listen();
-  quality.add(params, 'movingScale', 0.15, 1, 0.05).name('Résolution en mouvement').onChange(viewChanged);
+  quality.add(params, 'movingScale', 0.05, 1, 0.05).name('Résolution en mouvement').onChange(viewChanged);
   quality.add(params, 'pixelRatio', 0.5, 3, 0.25).name('Densité de pixels').onChange(viewChanged);
 
   const exp = gui.addFolder('Export');
