@@ -6,8 +6,10 @@ export const MATERIAL_SCALE = 350;
 export const GROUND_OCTAVES = 16;
 const SNOW_SMOOTH_WAVELENGTH = 60;
 const SNOW_FLATTENING = 0.85;
-const STEEP_SLOPE = [0.35, 0.8];
+const STEEP_SLOPE = [0.25, 0.6];
 const ROCK_ROUGHNESS = 1.25;
+const WALL_SLOPE = [0.45, 0.9];
+const WALL_DETAIL_WAVELENGTH = 150;
 const RIDGE_WAVELENGTH = 400;
 const STRATA_THICKNESS = 30;
 const STRATA_TILT = 40;
@@ -46,6 +48,41 @@ export function duneScales(): Uint32Array {
     ...factors(DUNE_CREST_WAVELENGTH, 1),
     ...DUNE_LAYERS.flatMap((layer) => factors(layer.wavelength, layer.stretch)),
   ]);
+}
+
+// Bruit 3D de la roche : creuse les parois raides et tache la roche, sans s'étirer sur les faces verticales.
+// Chaque octave est tournée selon une orientation propre pour qu'aucune grille ne soit perceptible
+export const ROCK_WAVELENGTHS = [48, 14, 4, 1.2];
+const ROCK_ROTATIONS = ROCK_WAVELENGTHS.map((_, i) => rotationMatrix(0.7 + i * 1.3, 0.5 + i * 0.9));
+
+// Matrice 3×3 (colonnes) : rotation autour de y puis autour de x
+function rotationMatrix(yaw: number, tilt: number): number[] {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cx = Math.cos(tilt), sx = Math.sin(tilt);
+  return [cy, sx * sy, -cx * sy, 0, cx, sx, sy, -sx * cy, cx * cy];
+}
+
+export interface RockOrigin {
+  frac: Float32Array;
+  cell: Uint32Array;
+  rotation: Float32Array;
+}
+
+// Origine de chaque octave du bruit 3D, pour une caméra en (x, 0, z) : le shader ajoute la position relative
+export function rockOrigins(x: number, z: number): RockOrigin {
+  const [ox, oy] = seedOffset();
+  const seeds = [ox, oy, ox + oy];
+  const frac = new Float32Array(ROCK_WAVELENGTHS.length * 3);
+  const cell = new Uint32Array(ROCK_WAVELENGTHS.length * 3);
+  ROCK_WAVELENGTHS.forEach((wavelength, i) => {
+    const r = ROCK_ROTATIONS[i];
+    for (let row = 0; row < 3; row++) {
+      const q = (r[row] * x + r[6 + row] * z) / wavelength;
+      const fl = Math.floor(q);
+      frac[i * 3 + row] = q - fl;
+      cell[i * 3 + row] = mod32(fl + seeds[row]);
+    }
+  });
+  return { frac, cell, rotation: new Float32Array(ROCK_ROTATIONS.flat()) };
 }
 
 const TWO_32 = 4294967296;
@@ -216,6 +253,10 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     // la roche reste à nu : on rend leur détail aux petites octaves, et un peu plus
     const erosion = 1 / (1 + dx * dx + dz * dz);
     let amplitude = b * (erosion + (ROCK_ROUGHNESS - erosion) * steep);
+    // Sur les parois, le détail fin vient du bruit 3D du shader : un champ de hauteur s'y étirerait
+    if (wavelength < WALL_DETAIL_WAVELENGTH) {
+      amplitude *= 1 - smoothstep(WALL_SLOPE[0], WALL_SLOPE[1], height * Math.hypot(gradX, gradZ));
+    }
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) {
       amplitude *= 1 - snowSmoothing(base + height * a, height * Math.hypot(gradX, gradZ));
     }

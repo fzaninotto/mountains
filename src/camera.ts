@@ -1,5 +1,7 @@
 import { params } from './params';
-import { fieldOrigins, gridOrigin, MATERIAL_SCALE, octaveOrigins, terrainHeight, type NoiseOrigin } from './noise';
+import {
+  fieldOrigins, gridOrigin, MATERIAL_SCALE, octaveOrigins, rockOrigins, terrainHeight, type NoiseOrigin, type RockOrigin,
+} from './noise';
 
 export interface View {
   camY: number;
@@ -8,6 +10,7 @@ export interface View {
   octaves: NoiseOrigin;
   material: NoiseOrigin;
   fields: NoiseOrigin;
+  rock: RockOrigin;
 }
 
 const CLEARANCE = 2;
@@ -96,6 +99,7 @@ export class FlyCamera {
       octaves: octaveOrigins(this.x, this.z),
       material: gridOrigin(this.x, this.z, MATERIAL_SCALE),
       fields: fieldOrigins(this.x, this.z),
+      rock: rockOrigins(this.x, this.z),
     };
   }
 

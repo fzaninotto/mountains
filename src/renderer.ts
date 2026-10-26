@@ -14,7 +14,7 @@ export interface Target {
 
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uBiomes', 'uBiomeScale', 'uMountainBias',
-  'uDesertBias', 'uFieldFrac', 'uFieldCell', 'uDuneScale',
+  'uDesertBias', 'uFieldFrac', 'uFieldCell', 'uDuneScale', 'uRockFrac', 'uRockCell', 'uRockRot',
   'uMaxH', 'uDetail', 'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell',
   'uMatFrac', 'uMatCell',
 ] as const;
@@ -95,6 +95,9 @@ export class Renderer {
     gl.uniform2uiv(u.uMatCell, view.material.cell);
     gl.uniform2fv(u.uFieldFrac, view.fields.frac);
     gl.uniform2uiv(u.uFieldCell, view.fields.cell);
+    gl.uniform3fv(u.uRockFrac, view.rock.frac);
+    gl.uniform3uiv(u.uRockCell, view.rock.cell);
+    gl.uniformMatrix3fv(u.uRockRot, false, view.rock.rotation);
     gl.uniform2uiv(u.uDuneScale, duneScales());
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
