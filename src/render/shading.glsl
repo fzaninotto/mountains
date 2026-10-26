@@ -106,25 +106,31 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   // Végétation : là où les formes (et non le détail du pixel) sont peu pentues, davantage dans les creux,
   // sous la limite de végétation, hors désert
   float gentle = mix(s.normal.y, s.coarse.y, 0.75) - 0.06 * s.cavity + 0.04 * variation;
-  float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - desert)
+  float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - smoothstep(0.2, 1.0, desert))
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
 
   // Herbe : teinte qui varie doucement de quelques mètres à quelques centaines (frais, sec, plus sombre), touffes
-  // de 6 m à 70 cm et brins de 40 cm à 2 cm. Vu en rasant, un pixel couvre plus de sol en profondeur : l'empreinte
-  // du détail fin en tient compte
-  float patches = vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, 0.6, footprint);
+  // de 6 m à 70 cm et brins de 40 cm à 2 cm. Vu en rasant, un pixel couvre 1/cos plus de sol en profondeur : un
+  // détail encore visible en largeur y serait écrasé en stries parallèles à l'horizon, il s'efface donc selon
+  // l'empreinte en profondeur
   vec3 view = normalize(vec3(p.x, p.y - uCamY, p.z));
-  float grazingFootprint = footprint / sqrt(max(-dot(view, s.normal), 0.05));
-  float tufts = vegetationNoise(p.xz, vec2(5.3, 61.2), 10, 13, 0.8, grazingFootprint);
-  float blades = vegetationNoise(p.xz, vec2(-12.7, 44.1), 14, 18, 1.0, grazingFootprint);
+  float cosView = max(-dot(view, s.coarse), 0.02);
+  float depthFootprint = footprint / cosView;
+  // Vues de biais, les brins se recouvrent : taches, touffes et brins perdent leur contraste
+  float sideways = smoothstep(0.1, 0.6, cosView);
+  float patches = (0.5 + 0.5 * sideways) * vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, 0.6, depthFootprint);
+  float tufts = sideways * vegetationNoise(p.xz, vec2(5.3, 61.2), 10, 13, 0.8, depthFootprint);
+  float blades = sideways * vegetationNoise(p.xz, vec2(-12.7, 44.1), 14, 18, 1.0, depthFootprint);
   float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches + 0.3 * tufts + 0.3 * blades, 0.0, 1.0);
   vec3 grass = mix(vec3(0.075, 0.115, 0.04), vec3(0.15, 0.15, 0.07), dryness);
   grass *= 1.0 + 0.4 * tufts + 0.8 * blades;
+  // Vers le désert, l'herbe sèche en steppe paille plutôt que de se mêler au sol brun
+  grass = mix(grass, vec3(0.2, 0.16, 0.075) * (1.0 + 0.3 * tufts), smoothstep(0.0, 0.5, desert));
 
   // Forêt : massifs dont la couverture varie selon les régions, plutôt dans les vallons et sur les versants
   // que sur les croupes, aux lisières découpées
-  float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, 0.6, footprint);
-  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, 0.6, footprint);
+  float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, 0.6, depthFootprint);
+  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, 0.6, depthFootprint);
   float hillside = smoothstep(0.995, 0.93, s.coarse.y);
   float woods = 0.6 * edges + region + 0.5 * s.valley + 0.2 * hillside - 0.25;
   float forest = 0.7 * smoothstep(0.0, 0.15, woods) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
