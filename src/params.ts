@@ -42,7 +42,7 @@ export const params: Params = {
   fog: 0.4,
   exposure: 0.75,
   fov: 55,
-  speed: 1,
+  speed: 300,
   movingScale: 0.2,
   pixelRatio: Math.min(window.devicePixelRatio, 2),
   exportScale: 2,

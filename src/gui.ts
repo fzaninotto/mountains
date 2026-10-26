@@ -1,5 +1,6 @@
 import GUI from 'lil-gui';
 import { params } from './params';
+import { MAX_SPEED, MIN_SPEED } from './camera';
 
 interface Actions {
   viewChanged(): void;
@@ -40,7 +41,7 @@ export function createGui(actions: Actions): GUI {
   look.add(params, 'fov', 20, 100, 1).name('Champ de vision').onChange(viewChanged);
 
   const quality = gui.addFolder('Navigation et qualité');
-  quality.add(params, 'speed', 0.02, 20, 0.01).name('Vitesse').listen();
+  quality.add(params, 'speed', MIN_SPEED, MAX_SPEED, 1).name('Vitesse (m/s)').listen();
   quality.add(params, 'movingScale', 0.05, 1, 0.05).name('Résolution en mouvement').onChange(viewChanged);
   quality.add(params, 'pixelRatio', 0.5, 3, 0.25).name('Densité de pixels').onChange(viewChanged);
 

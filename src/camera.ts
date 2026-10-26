@@ -12,6 +12,8 @@ export interface View {
 
 const CLEARANCE = 2;
 const MAX_PITCH = 1.45;
+export const MIN_SPEED = 2;
+export const MAX_SPEED = 20000;
 
 export class FlyCamera {
   x = 0;
@@ -40,7 +42,7 @@ export class FlyCamera {
     });
     element.addEventListener('wheel', (e) => {
       e.preventDefault();
-      params.speed = Math.max(0.02, Math.min(20, params.speed * Math.exp(-e.deltaY * 0.001)));
+      params.speed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, params.speed * Math.exp(-e.deltaY * 0.001)));
     }, { passive: false });
   }
 
@@ -58,7 +60,7 @@ export class FlyCamera {
 
   speed(): number {
     const boost = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 5 : 1;
-    return params.speed * Math.max(20, this.y - this.ground()) * boost;
+    return params.speed * boost;
   }
 
   // Renvoie true si la vue a changé
