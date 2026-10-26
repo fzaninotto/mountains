@@ -17,9 +17,11 @@ const vec3 OZONE = vec3(0.0098, 0.0282, 0.0013);
 const float AEROSOL_G = 0.85;
 // Part de la lumière arrêtée par les aérosols qui est diffusée (le reste est absorbé)
 const float AEROSOL_ALBEDO = 0.3;
-// Éclairement du sol par le soleil direct, et intensité de la lumière diffusée par l'atmosphère
+// Éclairement du sol par le soleil direct, et intensité de la lumière diffusée par l'atmosphère : la même
+// lumière, π convertissant l'éclairement en luminance d'une surface blanche (sans ce lien, la brume prend le pas
+// sur le relief dès qu'on baisse l'éclairement)
 const float SUN_IRRADIANCE = 2.6;
-const float SCATTER_INTENSITY = 10.0;
+const float SCATTER_INTENSITY = SUN_IRRADIANCE * 3.14159;
 // Part isotrope approchant la diffusion multiple (sans elle, le ciel à l'opposé du soleil serait trop sombre)
 const float MULTIPLE_SCATTERING = 0.15;
 

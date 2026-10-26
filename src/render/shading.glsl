@@ -150,8 +150,12 @@ vec3 shadeTerrain(vec3 p, float t, int shadowSteps) {
   // Les creux reçoivent moins de ciel et de lumière renvoyée
   float occlusion = clamp(1.0 + 0.9 * s.cavity, 0.35, 1.0);
   vec3 skyLight = skyCol * (0.5 + 0.5 * n.y) * occlusion;
-  // Lumière renvoyée par le sol éclairé alentour (albédo moyen d'environ 0,15)
-  vec3 bounce = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * 0.15 * clamp(0.5 - 0.5 * n.y, 0.0, 1.0) * occlusion;
+  // Lumière renvoyée (albédo moyen d'environ 0,15) par le sol plat alentour, éclairé par le soleil et le ciel, et,
+  // pour un versant tourné à l'opposé du soleil, par les versants d'en face qui reçoivent le soleil de face
+  vec3 ground = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyCol;
+  vec3 antiSun = normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z) + vec3(1e-4, 0.0, 0.0));
+  vec3 slopes = sunCol * SUN_IRRADIANCE * 0.8;
+  vec3 bounce = (ground * clamp(0.5 - 0.5 * n.y, 0.0, 1.0) + slopes * max(dot(n, antiSun), 0.0)) * 0.15 * occlusion;
   return albedo * (sunCol * SUN_IRRADIANCE * dif * shadow + skyLight + bounce);
 }
 

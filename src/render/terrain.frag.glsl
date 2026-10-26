@@ -7,6 +7,11 @@ const float GLARE_WIDE = 0.03;
 const float GLARE_NARROW = 0.5;
 // Assombrissement relatif des coins de l'image
 const float VIGNETTE = 0.3;
+// Exposition adaptée à l'éclairement d'un sol plat, comme un appareil photo : uExposure vaut pour DAYLIGHT_REF
+// (soleil à 12°) ; EXPOSURE_ADAPT est la part de l'écart compensée (en plein soleil la roche ne sature plus, au
+// couchant le sol reste lisible)
+const float DAYLIGHT_REF = 0.5;
+const float EXPOSURE_ADAPT = 0.6;
 // Amplitude du grain, qui sert aussi de tramage contre les aplats en escalier
 const float GRAIN = 1.0 / 255.0;
 
@@ -17,8 +22,11 @@ void main() {
 
   sunCol = sunColor(uSunDir, 1.0, OZONE_GROUND);
   sunColAloft = sunColor(uSunDir, RAYLEIGH_SCATTER_AIR, OZONE_ALOFT);
-  sunColLow = sunColor(uSunDir, exp(-uCamY / RAYLEIGH_HEIGHT), OZONE_GROUND);
+  // La lueur rasante n'existe que soleil bas : plus haut, l'horizon est éclairé comme le reste du ciel
+  sunColLow = mix(sunColor(uSunDir, exp(-uCamY / RAYLEIGH_HEIGHT), OZONE_GROUND), sunColAloft, smoothstep(0.03, 0.15, uSunDir.y));
   skyCol = skyIrradiance();
+  float daylight = dot(sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) + skyCol, vec3(0.2126, 0.7152, 0.0722));
+  float exposure = uExposure * clamp(pow(DAYLIGHT_REF / daylight, EXPOSURE_ADAPT), 0.4, 4.0);
 
   vec2 uv = (2.0 * fragCoord - uResolution) / uResolution.y;
   vec3 rd = normalize(uCamRot * vec3(uv, uFocal));
@@ -42,7 +50,7 @@ void main() {
   float mu = max(dot(rd, uSunDir), 0.0);
   col += sunCol * uSunVisible * (GLARE_WIDE * pow(mu, 8.0) + GLARE_NARROW * pow(mu, 400.0));
 
-  col = pow(aces(col * uExposure), vec3(1.0 / 2.2));
+  col = pow(aces(col * exposure), vec3(1.0 / 2.2));
   vec2 p = fragCoord / uResolution - 0.5;
   col *= 1.0 - VIGNETTE * dot(p, p);
   // Grain fixe par pixel : identique d'une passe de lissage à l'autre, il survit à la moyenne
