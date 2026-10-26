@@ -68,7 +68,7 @@ vec3 shadeTerrain(vec3 p, float t) {
   vec3 n = calcNormal(p, t);
   vec3 albedo = terrainAlbedo(p, n, t);
   float dif = max(dot(n, uSunDir), 0.0);
-  float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t) : 0.0;
+  float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t, SHADOW_STEPS) : 0.0;
   float ambient = 0.5 + 0.5 * n.y;
   // Lumière renvoyée par le sol éclairé en face
   float bounce = max(dot(n, normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z))), 0.0) * (1.0 - n.y);
@@ -82,7 +82,7 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
   float fresnel = 0.02 + 0.98 * pow(1.0 - max(-rd.y, 0.0), 5.0);
   float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t);
   vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr), p, r, tr) : sky(r);
-  float shadow = softShadow(p, uSunDir, t);
+  float shadow = softShadow(p, uSunDir, t, SHADOW_STEPS);
   vec3 deep = vec3(0.01, 0.03, 0.04) * (skyCol + sunCol * shadow * max(uSunDir.y, 0.0) * 2.0);
   return mix(deep, reflection, fresnel);
 }

@@ -58,17 +58,22 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
   return t < tmax ? t : -1.0;
 }
 
-// Ombre douce vers la direction rd (1 : éclairé, 0 : à l'ombre), d'après la distance minimale au relief
-float softShadow(vec3 ro, vec3 rd, float tOffset) {
+// Ombre douce vers la direction rd (1 : éclairé, 0 : à l'ombre), d'après la distance minimale au relief.
+// Le niveau de détail croît SHADOW_LOD fois plus vite le long du rayon d'ombre : au départ le détail
+// est celui du pixel (pas d'acné), plus loin les octaves fines et le creusement s'effacent d'eux-mêmes
+const int SHADOW_STEPS = 56;
+const float SHADOW_LOD = 4.0;
+float softShadow(vec3 ro, vec3 rd, float tOffset, int maxSteps) {
   float res = 1.0;
   float t = max(0.5, tOffset * pixelAngle * 2.0);
-  for (int i = 0; i < 80; i++) {
+  for (int i = 0; i < SHADOW_STEPS; i++) {
+    if (i >= maxSteps) break;
     vec3 p = ro + rd * t;
     if (p.y > uMaxH || t > 30000.0) break;
-    float h = surfaceDistance(p, tOffset + t);
+    float h = surfaceDistance(p, tOffset + SHADOW_LOD * t);
     res = min(res, 12.0 * h / t);
     if (res < 0.001) break;
-    t += clamp(h * 0.5, 0.3 + t * 0.02, 400.0 + t * 0.1);
+    t += clamp(h * 0.8, 0.3 + t * 0.03, 400.0 + t * 0.1);
   }
   return smoothstep(0.0, 1.0, clamp(res, 0.0, 1.0));
 }
