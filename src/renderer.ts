@@ -26,6 +26,7 @@ export class Renderer {
   private readonly gl: WebGL2RenderingContext;
   private readonly terrainProgram: WebGLProgram;
   private readonly blitProgram: WebGLProgram;
+  private readonly sourceScale: WebGLUniformLocation | null;
   private readonly uniforms: TerrainUniforms;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -35,6 +36,7 @@ export class Renderer {
     this.maxSize = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0]);
     this.terrainProgram = this.createProgram(terrainSource);
     this.blitProgram = this.createProgram(blitSource);
+    this.sourceScale = gl.getUniformLocation(this.blitProgram, 'uSourceScale');
     this.uniforms = Object.fromEntries(
       TERRAIN_UNIFORMS.map((name) => [name, gl.getUniformLocation(this.terrainProgram, name)]),
     ) as TerrainUniforms;
@@ -62,16 +64,17 @@ export class Renderer {
   }
 
   // Ne calcule que les lignes [y0, y1[ : permet d'étaler une image nette sur plusieurs frames
-  renderRows(target: Target, view: View, y0: number, y1: number) {
+  // width × height : portion de la cible utilisée (le coin inférieur gauche), toute la cible par défaut
+  renderRows(target: Target, view: View, y0: number, y1: number, width = target.width, height = target.height) {
     const gl = this.gl;
     const u = this.uniforms;
     gl.useProgram(this.terrainProgram);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
-    gl.viewport(0, 0, target.width, target.height);
+    gl.viewport(0, 0, width, height);
     gl.enable(gl.SCISSOR_TEST);
-    gl.scissor(0, y0, target.width, y1 - y0);
+    gl.scissor(0, y0, width, y1 - y0);
 
-    gl.uniform2f(u.uResolution, target.width, target.height);
+    gl.uniform2f(u.uResolution, width, height);
     gl.uniform1f(u.uCamY, view.camY);
     gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
     gl.uniform1f(u.uFocal, view.focal);
@@ -104,10 +107,11 @@ export class Renderer {
     gl.disable(gl.SCISSOR_TEST);
   }
 
-  // Copie une cible vers une autre (avec mise à l'échelle), ou vers l'écran si destination est null
-  copy(source: Target, destination: Target | null) {
+  // Copie (une portion d')une cible vers une autre avec mise à l'échelle, ou vers l'écran si destination est null
+  copy(source: Target, destination: Target | null, sourceWidth = source.width, sourceHeight = source.height) {
     const gl = this.gl;
     gl.useProgram(this.blitProgram);
+    gl.uniform2f(this.sourceScale, sourceWidth / source.width, sourceHeight / source.height);
     gl.bindFramebuffer(gl.FRAMEBUFFER, destination?.framebuffer ?? null);
     gl.viewport(0, 0, destination?.width ?? gl.drawingBufferWidth, destination?.height ?? gl.drawingBufferHeight);
     gl.activeTexture(gl.TEXTURE0);

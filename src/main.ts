@@ -34,6 +34,8 @@ camera.pitch = startValue('pitch');
 camera.placeAboveGround(startValue('alt'));
 
 let preview: Target | null = null;
+let previewWidth = 1;
+let previewHeight = 1;
 let sharp: Target | null = null;
 let exportTarget: Target | null = null;
 let refineJob: Job | null = null;
@@ -44,8 +46,11 @@ let changedAt = 0;
 let pixelBudget = 250_000;
 // Résolution de l'aperçu en mouvement, ajustée en continu pour tenir params.targetFps
 let movingScale = params.movingScale;
-let previewDrawn = false;
-let fps = 0;
+let frameIndex = 0;
+let lastPreviewFrame = -1;
+let lastPreviewAt = 0;
+// Instants des aperçus affichés pendant la dernière seconde : la cadence réellement perçue
+const previewTimes: number[] = [];
 
 function invalidate() {
   dirty = true;
@@ -114,7 +119,7 @@ function saveExport(target: Target) {
 function status(): string {
   if (exportJob) return `Export ${Math.round((100 * exportJob.row) / exportJob.target.height)} %`;
   if (refineJob) return `Affinage ${Math.round((100 * refineJob.row) / refineJob.target.height)} %`;
-  return sharpDone ? 'Net' : `Aperçu ${Math.round(movingScale * 100)} % · ${Math.round(fps)} img/s`;
+  return sharpDone ? 'Net' : `Aperçu ${Math.round(movingScale * 100)} % · ${previewFps()} img/s`;
 }
 
 function biomeName(level: number, desert: number): string {
@@ -148,27 +153,37 @@ function updateHud() {
   ].join(' · ') + '\n' + viewHash();
 }
 
+function previewFps(): number {
+  if (previewTimes.length < 2) return 0;
+  return Math.round(((previewTimes.length - 1) * 1000) / (previewTimes[previewTimes.length - 1] - previewTimes[0]));
+}
+
 // Le coût d'un aperçu est proportionnel à son nombre de pixels, donc au carré de l'échelle :
-// on corrige l'échelle par la racine du rapport entre durée visée et durée mesurée
-function adaptMovingScale(frameTime: number) {
-  // Mesures aberrantes (images fusionnées, onglet en arrière-plan) : ignorées
-  if (frameTime <= 0.001 || frameTime > 0.5) return;
-  fps = fps ? fps * 0.8 + 0.2 / frameTime : 1 / frameTime;
+// on corrige l'échelle par la racine du rapport entre durée visée et durée mesurée.
+// La durée n'est mesurée qu'entre deux aperçus consécutifs : le GPU travaille en différé, et seul un
+// enchaînement d'aperçus fait sentir sa charge sur la cadence des images
+function adaptMovingScale(interval: number) {
   const target = 1 / params.targetFps;
-  if (frameTime < target * 1.15 && frameTime > target * 0.8) return;
-  const factor = Math.min(1.1, Math.max(0.7, Math.sqrt(target / frameTime)));
+  if (interval < target * 1.15 && interval > target * 0.8) return;
+  const factor = Math.min(1.1, Math.max(0.7, Math.sqrt(target / interval)));
   const next = Math.round((movingScale * factor) / MOVING_SCALE_STEP) * MOVING_SCALE_STEP;
   movingScale = Math.min(params.movingScale, Math.max(MIN_MOVING_SCALE, next));
 }
 
+function recordPreview(now: number) {
+  if (lastPreviewFrame === frameIndex - 1) adaptMovingScale((now - lastPreviewAt) / 1000);
+  lastPreviewFrame = frameIndex;
+  lastPreviewAt = now;
+  previewTimes.push(now);
+  while (now - previewTimes[0] > 1000) previewTimes.shift();
+}
+
 let last = performance.now();
 function frame(now: number) {
-  const frameTime = (now - last) / 1000;
-  const dt = Math.min(0.1, frameTime);
+  // Pas de temps réel : le déplacement ne dépend pas de la cadence (plafond pour les retours d'arrière-plan)
+  const dt = Math.min(0.5, (now - last) / 1000);
   last = now;
-
-  if (previewDrawn) adaptMovingScale(frameTime);
-  previewDrawn = false;
+  frameIndex++;
 
   // Ajuste la quantité de pixels calculés par frame pour garder l'interface fluide
   if (refineJob || exportJob) {
@@ -186,20 +201,23 @@ function frame(now: number) {
       saveExport(target);
     }
   } else if (dirty) {
-    movingScale = Math.min(movingScale, params.movingScale);
+    // Allouée une fois à la résolution maximale ; l'aperçu n'en utilise qu'un coin, sans réallocation à chaque ajustement
     preview = renderer.ensureTarget(
       preview,
-      Math.max(1, Math.round(canvas.width * movingScale)),
-      Math.max(1, Math.round(canvas.height * movingScale)),
+      Math.max(1, Math.round(canvas.width * params.movingScale)),
+      Math.max(1, Math.round(canvas.height * params.movingScale)),
     );
-    renderer.renderRows(preview, camera.view(), 0, preview.height);
-    renderer.copy(preview, null);
+    movingScale = Math.min(movingScale, params.movingScale);
+    previewWidth = Math.max(1, Math.min(preview.width, Math.round(canvas.width * movingScale)));
+    previewHeight = Math.max(1, Math.min(preview.height, Math.round(canvas.height * movingScale)));
+    renderer.renderRows(preview, camera.view(), 0, previewHeight, previewWidth, previewHeight);
+    renderer.copy(preview, null, previewWidth, previewHeight);
     dirty = false;
-    previewDrawn = true;
+    recordPreview(now);
   } else if (!sharpDone && preview) {
     if (!refineJob && now - changedAt > REFINE_DELAY) {
       sharp = renderer.ensureTarget(sharp, canvas.width, canvas.height);
-      renderer.copy(preview, sharp);
+      renderer.copy(preview, sharp, previewWidth, previewHeight);
       refineJob = { target: sharp, view: camera.view(), row: 0 };
     }
     if (refineJob) {
