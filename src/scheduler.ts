@@ -11,6 +11,8 @@ import type { Renderer, Target } from './render/renderer';
 const REFINE_DELAY = 150;
 const MIN_MOVING_SCALE = 0.05;
 const MOVING_SCALE_STEP = 0.01;
+/** Nombre d'intervalles dont la médiane pilote la résolution de l'aperçu. */
+const INTERVAL_WINDOW = 5;
 
 /** Image calculée par bandes, de bas en haut. */
 interface Job {
@@ -39,6 +41,8 @@ export class FrameScheduler {
   private lastPreviewAt = 0;
   /** Instants des aperçus affichés pendant la dernière seconde : la cadence réellement perçue. */
   private readonly previewTimes: number[] = [];
+  /** Derniers intervalles entre aperçus consécutifs (s). */
+  private readonly previewIntervals: number[] = [];
 
   constructor(
     private readonly renderer: Renderer,
@@ -164,7 +168,13 @@ export class FrameScheduler {
   private recordPreview(now: number) {
     // La durée n'est mesurée qu'entre deux aperçus consécutifs : le GPU travaille en différé, et seul un
     // enchaînement d'aperçus fait sentir sa charge sur la cadence des images
-    if (this.lastPreviewFrame === this.frameIndex - 1) this.adaptMovingScale((now - this.lastPreviewAt) / 1000);
+    if (this.lastPreviewFrame === this.frameIndex - 1) {
+      // Médiane des derniers intervalles : une image ponctuellement lente ne doit pas effondrer la résolution
+      this.previewIntervals.push((now - this.lastPreviewAt) / 1000);
+      if (this.previewIntervals.length > INTERVAL_WINDOW) this.previewIntervals.shift();
+      const sorted = [...this.previewIntervals].sort((a, b) => a - b);
+      this.adaptMovingScale(sorted[sorted.length >> 1]);
+    }
     this.lastPreviewFrame = this.frameIndex;
     this.lastPreviewAt = now;
     this.previewTimes.push(now);
