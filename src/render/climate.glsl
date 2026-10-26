@@ -52,16 +52,22 @@ float duneWeight(float level, float desert) {
   return desert * smoothstep(0.12, 0.2, level) * lowland(level);
 }
 
-// Value noise de l'octave `octave` du relief, décalé de `offset` pour ne pas reproduire ses formes,
-// et son gradient (par mètre)
-vec3 octaveNoise(vec2 x, int octave, vec2 offset) {
+// Position de x dans l'espace de l'octave `octave` du relief, sans sa cellule entière uOctCell[octave], et dq/dx
+vec2 octaveSpace(vec2 x, int octave, out mat2 jacobian) {
   vec2 q = x / uScale;
-  mat2 jacobian = mat2(1.0 / uScale);
+  jacobian = mat2(1.0 / uScale);
   for (int i = 0; i < octave; i++) {
     q = 2.0 * (M2 * q);
     jacobian = 2.0 * (M2 * jacobian);
   }
-  vec3 n = noised(uOctFrac[octave] + q + offset, uOctCell[octave]);
+  return uOctFrac[octave] + q;
+}
+
+// Value noise de l'octave `octave` du relief, décalé de `offset` pour ne pas reproduire ses formes,
+// et son gradient (par mètre)
+vec3 octaveNoise(vec2 x, int octave, vec2 offset) {
+  mat2 jacobian;
+  vec3 n = noised(octaveSpace(x, octave, jacobian) + offset, uOctCell[octave]);
   return vec3(n.x, transpose(jacobian) * n.yz);
 }
 
@@ -169,13 +175,24 @@ const float DUNE_SHEET = 0.5 * (1.0 / DUNE_WINDWARD_SLOPE + 1.0 / DUNE_LEE_SLOPE
 // long des crêtes (≈ 1,1 au pire), plus les versants au vent des couches plus grandes : elle reste sous 1,5 (sondée :
 // 0,9 au plus). Le pas de march(), uStep = 0,4 fois l'écart vertical, ne traverse rien tant qu'elle reste sous
 // sqrt(1 / uStep² - 1) ≈ 2,3
+// Bruit de grande échelle commun aux couches de dunes (valeur, gradient par mètre) : son gradient fait tourner le vent,
+// sa valeur règle l'abondance du sable
+vec3 duneWarp(vec2 x) {
+  float kWarp = float(uDuneScale[0]);
+  vec3 warp = noised(kWarp * (uFieldFrac[0] + x / uBiomeScale) + vec2(1.3, 7.1), uDuneScale[0] * uFieldCell[0]);
+  return vec3(warp.x, warp.yz * kWarp / uBiomeScale);
+}
+
+// Direction locale du vent, perpendiculaire aux crêtes des dunes
+vec2 duneWind(vec2 x) {
+  return normalize(vec2(1.0, 0.0) + DUNE_WARP * duneWarp(x).yz);
+}
+
 vec3 dunes(vec2 x, float minWavelength, float contact) {
   // Même la plus grande couche est effacée : rien à évaluer
   if (uBiomeScale / float(uDuneScale[1]) <= minWavelength) return vec3(0.0);
   vec2 q = uFieldFrac[0] + x / uBiomeScale;
-  float kWarp = float(uDuneScale[0]);
-  vec3 warp = noised(kWarp * q + vec2(1.3, 7.1), uDuneScale[0] * uFieldCell[0]);
-  warp.yz *= kWarp / uBiomeScale;
+  vec3 warp = duneWarp(x);
   // Coordonnée le long du vent (m), tordue, et son gradient
   float along = x.x + DUNE_WARP * warp.x;
   vec2 alongGrad = vec2(1.0, 0.0) + DUNE_WARP * warp.yz;

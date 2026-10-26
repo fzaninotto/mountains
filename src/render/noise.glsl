@@ -31,19 +31,6 @@ vec3 noised(vec2 x, uvec2 cell) {
   );
 }
 
-// Value noise 3D dans [-1, 1] : bon marché, utilisé pour la géométrie des parois
-float valueNoise3(vec3 x, uvec3 cell) {
-  vec3 fl = floor(x);
-  vec3 f = x - fl;
-  uvec3 i = uvec3(ivec3(fl)) + cell;
-  vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  float a = hash3(i), b = hash3(i + uvec3(1u, 0u, 0u));
-  float c = hash3(i + uvec3(0u, 1u, 0u)), d = hash3(i + uvec3(1u, 1u, 0u));
-  float e = hash3(i + uvec3(0u, 0u, 1u)), g = hash3(i + uvec3(1u, 0u, 1u));
-  float h = hash3(i + uvec3(0u, 1u, 1u)), k = hash3(i + uvec3(1u, 1u, 1u));
-  return -1.0 + 2.0 * mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
-}
-
 // Gradient unitaire pseudo-aléatoire, uniforme sur la sphère
 vec3 gradient3(uvec3 i) {
   float angle = hash3(i) * 6.2831853;
@@ -53,7 +40,7 @@ vec3 gradient3(uvec3 i) {
 }
 
 // Bruit de gradient 3D (type Perlin), environ dans [-1, 1] : contrairement au value noise, il ne laisse pas
-// deviner de cellules cubiques. Plus coûteux, il sert à la couleur de la roche
+// deviner de cellules cubiques. Gradients uniformes sur la sphère, plus coûteux : il sert à la couleur de la roche
 float gradientNoise3(vec3 x, uvec3 cell) {
   vec3 fl = floor(x);
   vec3 f = x - fl;
@@ -68,4 +55,30 @@ float gradientNoise3(vec3 x, uvec3 cell) {
   float h = dot(gradient3(i + uvec3(0u, 1u, 1u)), f - vec3(0.0, 1.0, 1.0));
   float k = dot(gradient3(i + uvec3(1u, 1u, 1u)), f - vec3(1.0, 1.0, 1.0));
   return 1.8 * mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
+}
+
+// Gradient pris parmi les 12 arêtes du cube (Perlin amélioré), produit scalaire avec f
+float edgeGradient(uvec3 i, vec3 f) {
+  int k = int(hash3(i) * 11.999);
+  float u = k < 8 ? f.x : f.y;
+  float v = k < 4 ? f.y : f.z;
+  return ((k & 1) == 0 ? u : -u) + ((k & 2) == 0 ? v : -v);
+}
+
+// Bruit de gradient 3D bon marché, environ dans [-1, 1] : un hachage par sommet comme le value noise, sans en
+// laisser deviner les cellules cubiques
+float edgeGradientNoise3(vec3 x, uvec3 cell) {
+  vec3 fl = floor(x);
+  vec3 f = x - fl;
+  uvec3 i = uvec3(ivec3(fl)) + cell;
+  vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = edgeGradient(i, f);
+  float b = edgeGradient(i + uvec3(1u, 0u, 0u), f - vec3(1.0, 0.0, 0.0));
+  float c = edgeGradient(i + uvec3(0u, 1u, 0u), f - vec3(0.0, 1.0, 0.0));
+  float d = edgeGradient(i + uvec3(1u, 1u, 0u), f - vec3(1.0, 1.0, 0.0));
+  float e = edgeGradient(i + uvec3(0u, 0u, 1u), f - vec3(0.0, 0.0, 1.0));
+  float g = edgeGradient(i + uvec3(1u, 0u, 1u), f - vec3(1.0, 0.0, 1.0));
+  float h = edgeGradient(i + uvec3(0u, 1u, 1u), f - vec3(0.0, 1.0, 1.0));
+  float k = edgeGradient(i + uvec3(1u, 1u, 1u), f - vec3(1.0, 1.0, 1.0));
+  return mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
 }

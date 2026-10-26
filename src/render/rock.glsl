@@ -9,6 +9,8 @@ const int ROCK_CARVE_FIRST = 2;
 // Profondeur du creusement relative à la longueur d'onde, et profondeur maximale cumulée
 const float ROCK_CARVE = 0.15;
 const float ROCK_CARVE_MAX = 0.15 * (18.0 + 7.0 + 2.6 + 1.0);
+// Gain du bruit de gradient, plus doux que le value noise, pour un creusement de même profondeur moyenne
+const float ROCK_CARVE_GAIN = 1.5;
 // Le creusement est pentu : sur les parois, la distance est réduite d'autant pour que les rayons ne la traversent pas
 const float ROCK_CARVE_LIPSCHITZ = 2.0;
 // Arrondi des arêtes (en unités du bruit) : vives, les arêtes des grandes octaves courent sur des dizaines de mètres
@@ -31,8 +33,9 @@ float rockCarve(vec3 p, float footprint) {
   for (int i = ROCK_CARVE_FIRST; i < ROCK_OCTAVES; i++) {
     float fade = rockFade(i, footprint);
     if (fade <= 0.0) break;
-    // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête
-    float n = valueNoise3(rockSpace(p, i), uRockCell[i]);
+    // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête. Bruit de gradient : les creux du
+    // value noise s'alignaient sur ses cellules cubiques
+    float n = clamp(ROCK_CARVE_GAIN * edgeGradientNoise3(rockSpace(p, i), uRockCell[i]), -1.0, 1.0);
     float bevel = ROCK_CARVE_BEVEL[i];
     carve += fade * ROCK_CARVE * ROCK_WAVELENGTHS[i] * (sqrt(n * n + bevel * bevel) - bevel);
   }
