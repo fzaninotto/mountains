@@ -3,7 +3,7 @@ import { params } from './params';
 import { FlyCamera, type View } from './camera';
 import { Renderer, type Target } from './renderer';
 import { createGui } from './gui';
-import { mountainness } from './noise';
+import { aridity, reliefLevel } from './noise';
 
 interface Job {
   target: Target;
@@ -18,7 +18,12 @@ const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const hud = document.querySelector<HTMLElement>('#hud')!;
 const renderer = new Renderer(canvas);
 const camera = new FlyCamera(canvas);
-camera.placeAboveGround(400);
+
+// Position de départ optionnelle dans l'URL : #x=12000&z=-3400&alt=400
+const start = new URLSearchParams(window.location.hash.slice(1));
+camera.x = Number(start.get('x')) || 0;
+camera.z = Number(start.get('z')) || 0;
+camera.placeAboveGround(Number(start.get('alt')) || 400);
 
 let preview: Target | null = null;
 let sharp: Target | null = null;
@@ -100,17 +105,18 @@ function status(): string {
   return sharpDone ? 'Net' : 'Aperçu';
 }
 
-function biomeName(m: number): string {
-  if (m < 0.25) return 'Plaine';
-  if (m < 0.75) return 'Moyenne montagne';
-  return 'Haute montagne';
+function biomeName(level: number, desert: number): string {
+  if (level < 0.12) return 'Mer';
+  if (level < 0.26) return desert > 0.5 ? 'Côte désertique' : 'Plage';
+  if (level < 0.45) return desert > 0.5 ? 'Désert' : 'Plaine';
+  if (level < 0.8) return desert > 0.5 ? 'Collines arides' : 'Moyenne montagne';
+  return desert > 0.5 ? 'Montagne aride' : 'Haute montagne';
 }
 
 function updateHud() {
   const clearance = camera.y - camera.ground();
-  const m = mountainness(camera.x, camera.z);
   hud.textContent = [
-    `${biomeName(m)} (${Math.round(m * 100)} %)`,
+    biomeName(reliefLevel(camera.x, camera.z), aridity(camera.x, camera.z)),
     `Altitude ${Math.round(camera.y)} m`,
     `sol +${Math.round(clearance)} m`,
     `${Math.round(camera.speed())} m/s`,

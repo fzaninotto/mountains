@@ -1,4 +1,4 @@
-import { biomes, MAX_OCTAVES, mountainBias, params, type Biome } from './params';
+import { BIOME_STOPS, biomes, desertBias, MAX_OCTAVES, mountainBias, params, type Biome } from './params';
 
 // Réplique en double précision du bruit de terrain.frag.glsl : les deux doivent rester identiques
 
@@ -6,6 +6,22 @@ export const MATERIAL_SCALE = 350;
 export const GROUND_OCTAVES = 16;
 const SNOW_SMOOTH_WAVELENGTH = 60;
 const SNOW_FLATTENING = 0.85;
+
+export const ARIDITY_SCALE_RATIO = 1.37;
+export const ARIDITY_SALT = 7919;
+
+export const DUNES = [
+  { dir: [0.8, 0.6], wavelength: 220, height: 18, warp: 1 },
+  { dir: [0.94, 0.34], wavelength: 45, height: 3, warp: 2 },
+] as const;
+
+// Phase de chaque train de dunes à la position de la caméra : le shader n'ajoute que la partie locale
+export function dunePhases(x: number, z: number): Float32Array {
+  return new Float32Array(DUNES.map((d) => {
+    const phase = (d.dir[0] * x + d.dir[1] * z) / d.wavelength;
+    return phase - Math.floor(phase);
+  }));
+}
 
 const TWO_32 = 4294967296;
 const mod32 = (v: number) => v - Math.floor(v / TWO_32) * TWO_32;
@@ -52,28 +68,69 @@ function snowSmoothing(h: number, slope: number): number {
   return SNOW_FLATTENING * smoothstep(params.snow - 100, params.snow + 150, h) * (1 - smoothstep(0.35, 0.7, slope));
 }
 
-// 0 = plaine, 0,5 = moyenne montagne, 1 = haute montagne. Champ continu à très grande échelle :
-// on passe toujours d'un biome au suivant progressivement, sans frontière
-export function mountainness(x: number, z: number): number {
-  const [ox, oy] = seedOffset();
-  const qx = x / params.biomeScale, qz = z / params.biomeScale;
-  const n = noised(qx, qz, ox, oy)[0] + 0.5 * noised(2 * qx + 0.37, 2 * qz + 0.71, 2 * ox, 2 * oy)[0];
-  return smoothstep(-0.45, 0.45, n / 1.5 + mountainBias());
+// Niveau de relief : 0 = mer, puis plage, plaine, moyenne et haute montagne jusqu'à 1. Champ continu à très
+// grande échelle : on passe toujours d'un biome au suivant progressivement, sans frontière
+export function reliefLevel(x: number, z: number): number {
+  return smoothstep(-0.45, 0.45, biomeNoise(x / params.biomeScale, z / params.biomeScale, 0) + mountainBias());
 }
 
-export function biomeAt(m: number): Biome {
-  const [plain, hills, high] = biomes();
-  const mix = (a: Biome, b: Biome, t: number): Biome => ({
-    base: a.base + (b.base - a.base) * t,
-    amplitude: a.amplitude + (b.amplitude - a.amplitude) * t,
-    gain: a.gain + (b.gain - a.gain) * t,
-  });
-  return mix(mix(plain, hills, smoothstep(0, 0.5, m)), high, smoothstep(0.5, 1, m));
+// Poids du désert (0 à 1), sur un second champ indépendant
+export function aridity(x: number, z: number): number {
+  const size = params.biomeScale * ARIDITY_SCALE_RATIO;
+  return smoothstep(0.1, 0.45, biomeNoise(x / size, z / size, ARIDITY_SALT) + desertBias());
+}
+
+function biomeNoise(qx: number, qz: number, salt: number): number {
+  const [ox, oy] = seedOffset();
+  const sx = ox + salt, sz = oy + salt;
+  return (noised(qx, qz, sx, sz)[0] + 0.5 * noised(2 * qx + 0.37, 2 * qz + 0.71, 2 * sx, 2 * sz)[0]) / 1.5;
+}
+
+export function biomeAt(level: number): Biome {
+  const list = biomes();
+  const result = { ...list[0] };
+  for (let i = 0; i < list.length - 1; i++) {
+    const t = smoothstep(BIOME_STOPS[i], BIOME_STOPS[i + 1], level);
+    result.base += (list[i + 1].base - result.base) * t;
+    result.amplitude += (list[i + 1].amplitude - result.amplitude) * t;
+    result.gain += (list[i + 1].gain - result.gain) * t;
+  }
+  return result;
+}
+
+// Les dunes n'existent que dans les zones arides basses : ni en mer, ni en montagne
+export function duneWeight(level: number, desert: number): number {
+  return desert * smoothstep(0.12, 0.2, level) * (1 - smoothstep(0.32, 0.6, level));
+}
+
+// Profil asymétrique : pente douce au vent, versant raide sous le vent
+function duneProfile(phase: number): number {
+  const f = phase - Math.floor(phase);
+  return f < 0.75 ? smoothstep(0, 0.75, f) : 1 - smoothstep(0.75, 1, f);
+}
+
+// minWavelength : plus petite longueur d'onde affichable ; les trains de dunes plus fins s'effacent
+function dunes(x: number, z: number, minWavelength: number): number {
+  const [ox, oy] = seedOffset();
+  const warp = 0.9 * noised(x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy)[0];
+  // Hauteur des crêtes variable, sur le bruit des biomes 64 fois plus fin (~600 m)
+  const qx = (64 * x) / params.biomeScale + 5.3, qz = (64 * z) / params.biomeScale + 1.9;
+  const crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(qx, qz, 64 * ox, 64 * oy)[0]);
+  let h = 0;
+  for (const dune of DUNES) {
+    const phase = (dune.dir[0] * x + dune.dir[1] * z) / dune.wavelength + warp * dune.warp;
+    h += duneProfile(phase) * dune.height * smoothstep(minWavelength, 2 * minWavelength, dune.wavelength);
+  }
+  return h * crest;
 }
 
 export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): number {
   const [ox, oy] = seedOffset();
-  const { base, amplitude: height, gain } = biomeAt(mountainness(x, z));
+  const level = reliefLevel(x, z);
+  const sand = duneWeight(level, aridity(x, z));
+  const biome = biomeAt(level);
+  const { base, gain } = biome;
+  const height = biome.amplitude * (1 - 0.5 * sand);
   let qx = x / params.scale, qz = z / params.scale;
   // Colonnes de la jacobienne dq/dx, pour connaître la vraie pente
   let j0: [number, number] = [1 / params.scale, 0];
@@ -96,7 +153,7 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     j1 = rotate(...j1);
     wavelength /= 2;
   }
-  return base + height * a;
+  return base + height * a + sand * dunes(x, z, params.scale * 2 ** -octaves);
 }
 
 export interface NoiseOrigin {
@@ -119,9 +176,10 @@ export function octaveOrigins(x: number, z: number): NoiseOrigin {
   return { frac, cell };
 }
 
-// Même principe pour un bruit à une seule échelle (matériau, biomes)
-export function gridOrigin(x: number, z: number, cellSize: number): NoiseOrigin {
-  const [ox, oy] = seedOffset();
+// Même principe pour un bruit à une seule échelle (matériau, biomes) ; salt décorrèle deux champs
+export function gridOrigin(x: number, z: number, cellSize: number, salt = 0): NoiseOrigin {
+  const [seedX, seedY] = seedOffset();
+  const ox = seedX + salt, oy = seedY + salt;
   const frac = new Float32Array(2);
   const cell = new Uint32Array(2);
   setOrigin(frac, cell, 0, x / cellSize, z / cellSize, ox, oy);

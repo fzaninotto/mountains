@@ -27,6 +27,7 @@ export function createGui(actions: Actions): GUI {
   const biome = gui.addFolder('Biomes');
   biome.add(params, 'biomeScale', 5000, 150000, 1000).name('Taille des biomes (m)').onChange(terrainChanged);
   biome.add(params, 'mountainCoverage', 0, 1, 0.01).name('Part de montagne').onChange(terrainChanged);
+  biome.add(params, 'desertCoverage', 0, 1, 0.01).name('Part de désert').onChange(terrainChanged);
 
   const look = gui.addFolder('Rendu');
   look.add(params, 'water', -3000, 2000, 10).name('Niveau de l’eau (m)').onChange(terrainChanged);

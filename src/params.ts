@@ -7,6 +7,7 @@ export interface Params {
   gain: number;
   biomeScale: number;
   mountainCoverage: number;
+  desertCoverage: number;
   detail: number;
   step: number;
   water: number;
@@ -30,6 +31,7 @@ export const params: Params = {
   gain: 0.5,
   biomeScale: 40000,
   mountainCoverage: 0.5,
+  desertCoverage: 0.5,
   detail: 1,
   step: 0.4,
   water: -60,
@@ -56,14 +58,26 @@ export interface Biome {
 const PLAIN: Biome = { base: 0, amplitude: 120, gain: 0.42 };
 const HILLS: Biome = { base: 400, amplitude: 900, gain: 0.47 };
 
-// Plaine, moyenne montagne, haute montagne
-export function biomes(): [Biome, Biome, Biome] {
-  return [PLAIN, HILLS, { base: 1200, amplitude: params.height, gain: params.gain }];
+// Biomes ordonnés le long du niveau de relief : mer, plage, plaine, moyenne montagne, haute montagne
+export const BIOME_STOPS = [0, 0.2, 0.32, 0.65, 1];
+
+export function biomes(): Biome[] {
+  return [
+    { base: params.water - 150, amplitude: 80, gain: 0.4 },
+    { base: params.water + 4, amplitude: 10, gain: 0.4 },
+    PLAIN,
+    HILLS,
+    { base: 1200, amplitude: params.height, gain: params.gain },
+  ];
 }
 
-// Décale le champ de biomes pour couvrir plus ou moins de surface en montagne
+// Décalent les champs de biomes pour couvrir plus ou moins de surface en montagne ou en désert
 export function mountainBias(): number {
   return (params.mountainCoverage - 0.5) * 1.2;
+}
+
+export function desertBias(): number {
+  return (params.desertCoverage - 0.5) * 1.2;
 }
 
 export function sunDirection(): [number, number, number] {
@@ -72,7 +86,7 @@ export function sunDirection(): [number, number, number] {
   return [Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), -Math.cos(elevation) * Math.cos(azimuth)];
 }
 
-// Borne haute du relief : base plus somme des amplitudes de toutes les octaves, pour le biome le plus haut
+// Borne haute du relief : base plus somme des amplitudes de toutes les octaves pour le biome le plus haut, plus les dunes
 export function maxTerrainHeight(): number {
-  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain)));
+  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 25;
 }
