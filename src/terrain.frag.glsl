@@ -29,21 +29,22 @@ uniform uvec2 uMatCell;
 uniform vec2 uFieldFrac[12];
 uniform uvec2 uFieldCell[12];
 uniform uvec2 uDuneScale[4];
-uniform vec3 uRockFrac[4];
-uniform uvec3 uRockCell[4];
-uniform mat3 uRockRot[4];
+uniform vec3 uRockFrac[6];
+uniform uvec3 uRockCell[6];
+uniform mat3 uRockRot[6];
 
 out vec4 outColor;
 
 const mat2 M2 = mat2(0.8, -0.6, 0.6, 0.8);
 const float MATERIAL_SCALE = 350.0;
 // Bruit 3D de la roche (longueurs d'onde identiques à noise.ts)
-const float ROCK_WAVELENGTH[4] = float[4](48.0, 14.0, 4.0, 1.2);
-const float ROCK_WEIGHT[4] = float[4](0.4, 0.3, 0.2, 0.1);
+const float ROCK_WAVELENGTH[6] = float[6](120.0, 48.0, 18.0, 7.0, 2.6, 1.0);
+const float ROCK_WEIGHT[6] = float[6](0.32, 0.22, 0.17, 0.13, 0.1, 0.06);
+// Le creusement n'utilise que les octaves de 18 m et moins : les plus grandes perceraient les arêtes fines
+const int ROCK_CARVE_FIRST = 2;
 // Profondeur maximale du creusement, relative à la longueur d'onde, et pente à partir de laquelle on creuse
-// Le creusement n'utilise pas l'octave de 48 m : assez profonde pour percer les arêtes fines
-const float ROCK_CARVE = 0.22;
-const float ROCK_CARVE_MAX = 0.22 * (14.0 + 4.0 + 1.2);
+const float ROCK_CARVE = 0.15;
+const float ROCK_CARVE_MAX = 0.15 * (18.0 + 7.0 + 2.6 + 1.0);
 // Le creusement est pentu : sur les parois, la distance est réduite d'autant pour que les rayons ne la traversent pas
 const float ROCK_CARVE_LIPSCHITZ = 2.0;
 const vec2 WALL_SLOPE = vec2(0.45, 0.9);
@@ -124,7 +125,7 @@ float rockFade(int i, float footprint) {
 // Profondeur (positive) dont la paroi est creusée : la surface ne fait que reculer, jamais avancer
 float rockCarve(vec3 p, float footprint) {
   float carve = 0.0;
-  for (int i = 1; i < 4; i++) {
+  for (int i = ROCK_CARVE_FIRST; i < 6; i++) {
     float fade = rockFade(i, footprint);
     if (fade <= 0.0) break;
     // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête vive, comme une roche fracturée
@@ -133,15 +134,40 @@ float rockCarve(vec3 p, float footprint) {
   return carve;
 }
 
-// Taches de la roche, entre -1 et 1
+// Bruit de gradient 3D (type Perlin) : contrairement au value noise, il ne laisse pas deviner de cellules cubiques
+vec3 gradient3(uvec3 i) {
+  float angle = hash3(i) * 6.2831853;
+  float z = hash3(i + uvec3(40503u, 2654435u, 97u)) * 2.0 - 1.0;
+  float r = sqrt(1.0 - z * z);
+  return vec3(r * cos(angle), r * sin(angle), z);
+}
+
+float gradientNoise3(vec3 x, uvec3 cell) {
+  vec3 fl = floor(x);
+  vec3 f = x - fl;
+  uvec3 i = uvec3(ivec3(fl)) + cell;
+  vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = dot(gradient3(i), f);
+  float b = dot(gradient3(i + uvec3(1u, 0u, 0u)), f - vec3(1.0, 0.0, 0.0));
+  float c = dot(gradient3(i + uvec3(0u, 1u, 0u)), f - vec3(0.0, 1.0, 0.0));
+  float d = dot(gradient3(i + uvec3(1u, 1u, 0u)), f - vec3(1.0, 1.0, 0.0));
+  float e = dot(gradient3(i + uvec3(0u, 0u, 1u)), f - vec3(0.0, 0.0, 1.0));
+  float g = dot(gradient3(i + uvec3(1u, 0u, 1u)), f - vec3(1.0, 0.0, 1.0));
+  float h = dot(gradient3(i + uvec3(0u, 1u, 1u)), f - vec3(0.0, 1.0, 1.0));
+  float k = dot(gradient3(i + uvec3(1u, 1u, 1u)), f - vec3(1.0, 1.0, 1.0));
+  return 1.8 * mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y), mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
+}
+
+// Teinte de la roche : fBm de bruit de gradient sur six échelles (120 m à 1 m), chacune tournée
+// et effacée sous la taille d'un pixel ; environ entre -1 et 1
 float rockStain(vec3 p, float footprint) {
   float r = 0.0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 6; i++) {
     float fade = rockFade(i, footprint);
     if (fade <= 0.0) break;
-    r += fade * ROCK_WEIGHT[i] * rockOctave(p, i);
+    r += fade * ROCK_WEIGHT[i] * gradientNoise3(uRockFrac[i] + uRockRot[i] * p / ROCK_WAVELENGTH[i] + 0.5, uRockCell[i]);
   }
-  return r;
+  return r * 1.6;
 }
 
 float steepness(float slope) {
@@ -234,7 +260,7 @@ float dunes(vec2 x, float minWavelength) {
 }
 
 // fBm à dérivées : les pentes accumulées atténuent les octaves suivantes, ce qui imite l'érosion
-float terrainG(vec2 x, float octaves, out vec2 slope) {
+float terrainG(vec2 x, float octaves, out vec2 slope, out float wallSlope) {
   vec3 c = climate(x);
   float level = c.x;
   float sand = duneWeight(level, c.y);
@@ -245,11 +271,17 @@ float terrainG(vec2 x, float octaves, out vec2 slope) {
   float a = 0.0, b = 1.0, wavelength = uScale;
   vec2 d = vec2(0.0);
   vec2 grad = vec2(0.0);
+  wallSlope = -1.0;
   for (int i = 0; i < MAX_OCT; i++) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
     if (w <= 0.0) break;
+    // Pente des grandes formes seulement : elle varie lentement, ce qui évite des rebords là où le creusement commence
+    if (wallSlope < 0.0 && wavelength < WALL_DETAIL_WAVELENGTH) wallSlope = height * length(grad);
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
-    float steep = steepness(height * length(grad));
+    // Pour les octaves fines, la pente qui décide « roche ou versant érodé » est figée sur celle des grandes formes :
+    // sinon le détail rend la pente plus raide, qui appelle plus de détail, et le terrain bascule en liserés nets
+    float rockSlope = wavelength < WALL_DETAIL_WAVELENGTH ? wallSlope : height * length(grad);
+    float steep = steepness(rockSlope);
     // Sur les pentes raides, les petites octaves deviennent des crêtes vives : arêtes et ravines de roche cassée
     float ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0.0;
     float v = mix(n.x, 1.0 - 2.0 * abs(n.x), ridged);
@@ -260,7 +292,7 @@ float terrainG(vec2 x, float octaves, out vec2 slope) {
     float erosion = 1.0 / (1.0 + dot(d, d));
     float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steep);
     // Sur les parois, le détail fin vient du bruit 3D (surfaceDistance) : un champ de hauteur s'y étirerait
-    if (wavelength < WALL_DETAIL_WAVELENGTH) amplitude *= 1.0 - smoothstep(WALL_SLOPE.x, WALL_SLOPE.y, height * length(grad));
+    if (wavelength < WALL_DETAIL_WAVELENGTH) amplitude *= 1.0 - smoothstep(WALL_SLOPE.x, WALL_SLOPE.y, rockSlope);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(base + height * a, height * length(grad));
     a += amplitude * v;
     grad += amplitude * (transpose(jacobian) * dv);
@@ -270,6 +302,7 @@ float terrainG(vec2 x, float octaves, out vec2 slope) {
     wavelength *= 0.5;
   }
   slope = height * grad;
+  if (wallSlope < 0.0) wallSlope = length(slope);
   float h = base + height * a;
   h += cliffLift(h, c.z);
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
@@ -277,7 +310,8 @@ float terrainG(vec2 x, float octaves, out vec2 slope) {
 
 float terrain(vec2 x, float octaves) {
   vec2 slope;
-  return terrainG(x, octaves, slope);
+  float wallSlope;
+  return terrainG(x, octaves, slope, wallSlope);
 }
 
 // Nombre d'octaves dont la longueur d'onde dépasse deux pixels à la distance t
@@ -290,8 +324,9 @@ float lod(float t) {
 // et la paroi est creusée par le bruit 3D : un champ de hauteur seul ne peut que s'étirer à la verticale
 float surfaceDistance(vec3 p, float t) {
   vec2 slope;
-  float dy = p.y - terrainG(p.xz, lod(t), slope);
-  float wall = smoothstep(WALL_SLOPE.x, WALL_SLOPE.y, length(slope));
+  float wallSlope;
+  float dy = p.y - terrainG(p.xz, lod(t), slope, wallSlope);
+  float wall = smoothstep(WALL_SLOPE.x, WALL_SLOPE.y, wallSlope);
   if (wall <= 0.0) return dy;
   float e = mix(dy, dy / sqrt(1.0 + dot(slope, slope)), wall);
   if (e >= ROCK_CARVE_MAX) return e;
@@ -375,20 +410,35 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
   return mix(col, fogCol, amount);
 }
 
+// Variation de couleur à grande échelle (375 m à 47 m) : fBm des octaves tournées du relief, décalé pour ne pas
+// reproduire ses formes
+float colorVariation(vec2 x) {
+  vec2 q = x / uScale;
+  float a = 0.0, b = 1.0, norm = 0.0;
+  for (int i = 0; i < 8; i++) {
+    if (i >= 4) {
+      a += b * noised(uOctFrac[i] + q + vec2(17.3, -9.1), uOctCell[i]).x;
+      norm += b;
+      b *= 0.55;
+    }
+    q = 2.0 * (M2 * q);
+  }
+  return a / norm;
+}
+
 vec3 terrainAlbedo(vec3 p, vec3 n, float t) {
-  float variation = noised(uMatFrac + p.xz / MATERIAL_SCALE, uMatCell).x;
+  float variation = colorVariation(p.xz);
   vec3 c = climate(p.xz);
   float desert = c.y;
 
-  // Roche : grise en climat tempéré, ocre en climat aride, tachée à plusieurs échelles et rayée de bandes
+  // Roche : grise en climat tempéré, ocre en climat aride, tachée à plusieurs échelles
   float footprint = t * pixelAngle;
-  float bands = 0.5 + 0.5 * sin(p.y / 7.0 + variation * 3.0) * smoothstep(2.0 * footprint, 6.0 * footprint, 7.0);
+  float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, footprint), 0.0, 1.0);
   vec3 col = mix(
-    mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), 0.5 + 0.5 * variation),
-    mix(vec3(0.24, 0.13, 0.07), vec3(0.4, 0.24, 0.13), 0.5 + 0.5 * variation),
+    mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), tone),
+    mix(vec3(0.24, 0.13, 0.07), vec3(0.4, 0.24, 0.13), tone),
     desert
   );
-  col *= (0.8 + 0.45 * rockStain(p, footprint)) * (0.9 + 0.15 * bands);
 
   float vegetation = smoothstep(0.78, 0.92, n.y) * (1.0 - desert)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
