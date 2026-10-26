@@ -72,10 +72,10 @@ describe('origines des bruits', () => {
 });
 
 describe('échelles des dunes', () => {
-  it('sont des facteurs entiers non nuls, deux par bruit', () => {
+  it('sont des facteurs entiers non nuls, deux par couche', () => {
     const scales = duneScales();
-    expect(scales).toHaveLength(2 * (1 + DUNE_LAYERS.length));
+    expect(scales).toHaveLength(1 + 2 * DUNE_LAYERS.length);
     scales.forEach((k) => expect(k).toBeGreaterThanOrEqual(1));
-    expect(params.biomeScale / scales[2]).toBeCloseTo(DUNE_LAYERS[0].wavelength, -1);
+    expect(params.biomeScale / scales[1]).toBeCloseTo(DUNE_LAYERS[0].wavelength, -1);
   });
 });

@@ -353,7 +353,7 @@ export class Renderer {
     gl.uniform3fv(u.uRockFrac, origins.rock.frac);
     gl.uniform3uiv(u.uRockCell, origins.rock.cell);
     gl.uniformMatrix3fv(u.uRockRot, false, origins.rock.rotation);
-    gl.uniform2uiv(u.uDuneScale, duneScales());
+    gl.uniform1uiv(u.uDuneScale, duneScales());
   }
 
   private createProgram(fragmentSource: string): WebGLProgram {

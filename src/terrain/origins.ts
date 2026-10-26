@@ -105,18 +105,15 @@ export function rockOrigins(x: number, z: number): RockOrigin {
 }
 
 /**
- * Facteurs d'échelle entiers (x, z) des dunes : ondulation, puis une paire par couche (x : crêtes ; z : bruits qui
- * les décalent et modulent leur hauteur, à l'échelle de leur longueur). Les fréquences des dunes sont des multiples
- * entiers de celle des biomes : le shader réutilise ainsi l'origine en double précision du premier champ de biomes,
- * au lieu d'en recevoir une par bruit.
+ * Facteurs d'échelle entiers des dunes : torsion des crêtes (et abondance du sable), puis une paire par couche
+ * (crêtes ; bruits de sinuosité et de hauteur des tronçons). Les fréquences des dunes sont des multiples entiers de
+ * celle des biomes : le shader réutilise ainsi l'origine en double précision du premier champ de biomes, au lieu d'en
+ * recevoir une par bruit.
  */
 export function duneScales(): Uint32Array {
-  const factors = (wavelength: number, stretch: number) => {
-    const kx = Math.max(1, Math.round(params.biomeScale / wavelength));
-    return [kx, Math.max(1, Math.round(kx / stretch))];
-  };
+  const factor = (wavelength: number) => Math.max(1, Math.round(params.biomeScale / wavelength));
   return new Uint32Array([
-    ...factors(DUNE_WARP_WAVELENGTH, 1),
-    ...DUNE_LAYERS.flatMap((layer) => factors(layer.wavelength, layer.stretch)),
+    factor(DUNE_WARP_WAVELENGTH),
+    ...DUNE_LAYERS.flatMap((layer) => [factor(layer.wavelength), factor(layer.wavelength * layer.segment)]),
   ]);
 }

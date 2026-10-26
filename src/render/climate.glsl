@@ -128,66 +128,131 @@ vec3 softMin(vec3 a, vec3 b, float k) {
   return vec3(mix(b.x, a.x, weight) - k * weight * (1.0 - weight), mix(b.yz, a.yz, weight));
 }
 
-// Rapport hauteur / écart maximal d'une dune entre deux couloirs plats, et position de sa crête dans la période
-const float DUNE_FIT = DUNE_WINDWARD_SLOPE * DUNE_LEE_SLOPE / (DUNE_WINDWARD_SLOPE + DUNE_LEE_SLOPE);
-const float DUNE_BRINK = DUNE_LEE_SLOPE / (DUNE_WINDWARD_SLOPE + DUNE_LEE_SLOPE);
-// Épaisseur moyenne de sable d'une dune de hauteur H et d'écart λ : DUNE_SHEET × H² / λ
+// Maximum adouci sur une largeur k de deux dunes (valeur, gradient). Leur part de face d'avalanche (slip) est mêlée
+// avec le même poids, dérivée comprise
+void softMaxDune(inout vec3 h, inout vec3 slip, vec3 dune, vec3 duneSlip, float k) {
+  float weight = clamp(0.5 + 0.5 * (dune.x - h.x) / k, 0.0, 1.0);
+  vec2 weightGrad = weight > 0.0 && weight < 1.0 ? 0.5 * (dune.yz - h.yz) / k : vec2(0.0);
+  h = vec3(mix(h.x, dune.x, weight) + k * weight * (1.0 - weight), mix(h.yz, dune.yz, weight));
+  slip = vec3(mix(slip.x, duneSlip.x, weight), mix(slip.yz, duneSlip.yz, weight) + (duneSlip.x - slip.x) * weightGrad);
+}
+
+// Value noise 1D de la rangée row (valeur dans [-1, 1], dérivée), cell étant la cellule entière qui s'ajoute à x
+vec2 noise1(float x, uint cell, uint row) {
+  float fl = floor(x);
+  float f = x - fl;
+  uint i = uint(int(fl)) + cell;
+  float a = hash(uvec2(i, row));
+  float b = hash(uvec2(i + 1u, row));
+  float u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return vec2(-1.0 + 2.0 * mix(a, b, u), 60.0 * f * f * (f * (f - 2.0) + 1.0) * (b - a));
+}
+
+// Épaisseur moyenne de sable d'une crête continue de hauteur H et d'écart λ : DUNE_SHEET × H² / λ
 const float DUNE_SHEET = 0.5 * (1.0 / DUNE_WINDWARD_SLOPE + 1.0 / DUNE_LEE_SLOPE);
 
-// Hauteur des dunes (m) et son gradient. Le vent souffle vers +x : chaque couche est une suite de cordons
-// perpendiculaires, de profil asymétrique (versant au vent en pente douce, face d'avalanche sous le vent), séparés
-// par des couloirs plats. Leurs crêtes ondulent un peu, se décalent et changent de hauteur au fil de bruits à
-// l'échelle de leur longueur. Les couches fines ne vivent que sur le versant au vent des plus grandes. Là où contact
-// tombe à 0 (contre le relief), elles fondent en une nappe de sable de même volume. Les fréquences (uDuneScale) sont
-// des multiples entiers de celle du premier champ de biomes, dont l'origine en double précision est ainsi
-// réutilisée. Les couches plus fines que minWavelength s'effacent, et leurs arêtes s'arrondissent avant.
-// Pente d'une couche : DUNE_LEE_SLOPE, à l'ondulation et au décalage des crêtes près (+26 % au pire). Avec la variation
-// des hauteurs, l'effacement des couches fines et le relief, elle reste sous 1,5 : le pas de march(), uStep = 0,4 fois
-// l'écart vertical, ne traverse rien tant qu'elle reste sous sqrt(1 / uStep² - 1) ≈ 2,3
+// Hauteur des dunes (m) et son gradient. Le vent souffle en moyenne vers +x. Chaque couche est une suite de crêtes
+// transverses le long d'une phase « tordue » : un bruit de grande amplitude, commun aux couches, fait tourner les
+// crêtes et varier leur écart d'une zone à l'autre ; un second, propre à la couche, les rend sinueuses. Chaque crête
+// a son propre bruit de hauteur le long de z, à l'échelle de quelques écarts : elle se découpe en tronçons qui
+// s'abaissent et s'interrompent indépendamment de ceux des crêtes voisines (aucune ligne ne se prolonge sur des
+// kilomètres). Là où une crête s'abaisse, elle recule sous le vent : chaque tronçon devient un croissant aux cornes
+// basses tournées sous le vent, qui rejoignent parfois la crête suivante (jonctions en Y). Le sable rare donne des
+// barkhanes isolées aux longues cornes entre des creux plats ; abondant, des crêtes barkhanoïdes presque continues.
+// Profil asymétrique : versant au vent en pente douce, face d'avalanche sous le vent. Les crêtes se raccordent par un
+// maximum adouci. Les couches fines ne vivent pas sur les faces d'avalanche des plus grandes. Là où contact tombe à 0
+// (contre le relief), elles fondent en une nappe de sable de volume voisin. Les fréquences (uDuneScale) sont des
+// multiples entiers de celle du premier champ de biomes, dont l'origine en double précision est ainsi réutilisée.
+// Les couches plus fines que minWavelength s'effacent, et leurs arêtes s'arrondissent avant.
+// L'écart local entre crêtes (1 / |grad phase|) varie à l'échelle des kilomètres : il est tenu pour constant dans le
+// gradient. Pente : face d'avalanche DUNE_LEE_SLOPE, accrue par le recul des cornes et la variation des hauteurs le
+// long des crêtes (≈ 1,1 au pire), plus les versants au vent des couches plus grandes : elle reste sous 1,5 (sondée :
+// 0,9 au plus). Le pas de march(), uStep = 0,4 fois l'écart vertical, ne traverse rien tant qu'elle reste sous
+// sqrt(1 / uStep² - 1) ≈ 2,3
 vec3 dunes(vec2 x, float minWavelength, float contact) {
+  // Même la plus grande couche est effacée : rien à évaluer
+  if (uBiomeScale / float(uDuneScale[1]) <= minWavelength) return vec3(0.0);
   vec2 q = uFieldFrac[0] + x / uBiomeScale;
-  uvec2 kw = uDuneScale[0];
-  vec3 warp = noised(vec2(kw) * q + vec2(1.3, 7.1), kw * uFieldCell[0]);
-  vec2 shiftGrad = DUNE_WARP * vec2(kw) / uBiomeScale * warp.yz;
+  float kWarp = float(uDuneScale[0]);
+  vec3 warp = noised(kWarp * q + vec2(1.3, 7.1), uDuneScale[0] * uFieldCell[0]);
+  warp.yz *= kWarp / uBiomeScale;
+  // Coordonnée le long du vent (m), tordue, et son gradient
+  float along = x.x + DUNE_WARP * warp.x;
+  vec2 alongGrad = vec2(1.0, 0.0) + DUNE_WARP * warp.yz;
+  // Abondance du sable (0 à 1) : le même bruit, dont la valeur ne se voit pas dans la torsion (seul son gradient
+  // oriente les crêtes)
+  vec3 sand = smoothstepGrad(-0.5, 0.5, warp);
   vec3 h = vec3(0.0);
   // Part de chaque couche épargnée par les faces d'avalanche des couches plus grandes, et son gradient
   float stoss = 1.0;
   vec2 stossGrad = vec2(0.0);
   for (int i = 0; i < DUNE_LAYER_COUNT; i++) {
-    uvec2 k = uDuneScale[i + 1];
-    float wavelength = uBiomeScale / float(k.x);
+    uint k = uDuneScale[1 + 2 * i], kSegment = uDuneScale[2 + 2 * i];
+    float wavelength = uBiomeScale / float(k);
     float fade = smoothstep(minWavelength, 2.0 * minWavelength, wavelength);
     if (fade <= 0.0) break;
-    // Bruits de la couche, isotropes à l'échelle de la longueur des crêtes
-    float g = float(k.y) / uBiomeScale;
-    uvec2 cell = k.y * uFieldCell[0];
-    vec3 bend = noised(float(k.y) * q + vec2(3.1, 8.3), cell);
-    vec3 crest = smoothstepGrad(-0.6, 0.6, noised(float(k.y) * q + vec2(5.3, 1.9), cell));
-    // Phase (en périodes) le long du vent, puis distance s (m) à la crête
-    float phase = fract(float(k.x) * uFieldFrac[0].x) + (x.x + DUNE_WARP * warp.x) / wavelength + DUNE_SINUOSITY * bend.x;
-    vec2 sGrad = vec2(1.0, 0.0) + shiftGrad + DUNE_SINUOSITY * wavelength * g * bend.yz;
-    float s = (fract(phase) - DUNE_BRINK) * wavelength;
-    // Hauteur de la crête, bornée pour laisser un couloir plat entre deux dunes
-    float top = min(DUNE_HEIGHTS[i], 0.9 * DUNE_FIT * wavelength) * fade;
-    vec3 height = top * vec3(mix(DUNE_LOWEST[i], 1.0, crest.x), (1.0 - DUNE_LOWEST[i]) * g * crest.yz);
-    height = vec3(height.x * stoss, height.yz * stoss + height.x * stossGrad);
-    vec3 windward = vec3(height.x + DUNE_WINDWARD_SLOPE * s, height.yz + DUNE_WINDWARD_SLOPE * sGrad);
-    vec3 lee = vec3(height.x - DUNE_LEE_SLOPE * s, height.yz - DUNE_LEE_SLOPE * sGrad);
-    // Arête arrondie, d'autant plus que la dune est petite à l'écran, pour éviter le crénelage des crêtes ; pied adouci
+    float top = DUNE_HEIGHTS[i] * fade;
+    float g = float(kSegment) / uBiomeScale;
+    uvec2 segmentCell = kSegment * uFieldCell[0];
+    vec3 bend = noised(float(kSegment) * q + vec2(3.1, 8.3), segmentCell);
+    // Phase (en périodes), sa partie entière en double précision par l'origine des biomes
+    float scaled = float(k) * uFieldFrac[0].x;
+    float phase = fract(scaled) + along / wavelength + DUNE_SINUOSITY * bend.x;
+    vec2 phaseGrad = alongGrad / wavelength + DUNE_SINUOSITY * g * bend.yz;
+    float norm = length(phaseGrad);
+    float base = floor(phase);
+    uint first = k * uFieldCell[0].x + uint(int(floor(scaled) + base));
+    // Abondance du sable : seuil des tronçons et recul des cornes
+    float sandRange = DUNE_SAND[2 * i + 1] - DUNE_SAND[2 * i];
+    vec3 bias = vec3(DUNE_SAND[2 * i] + sandRange * sand.x, sandRange * sand.yz);
+    float horn = mix(DUNE_HORNS[0], DUNE_HORNS[1], sand.x);
+    vec2 hornGrad = (DUNE_HORNS[1] - DUNE_HORNS[0]) * sand.yz;
     float brinkWidth = 0.02 * wavelength + 0.5 * minWavelength;
-    vec3 ridge = softMin(windward, lee, (DUNE_WINDWARD_SLOPE + DUNE_LEE_SLOPE) * brinkWidth);
-    vec3 dune = -softMin(-ridge, vec3(0.0), 0.1 * top);
-    vec3 sheet = vec3(DUNE_SHEET / wavelength * height.x * height.x, 2.0 * DUNE_SHEET / wavelength * height.x * height.yz);
-    h += mix(sheet, dune, contact);
-    // Les couches suivantes s'effacent sur la face d'avalanche de celle-ci, progressivement (passé la crête, et
-    // jusqu'à mi-hauteur au pied) : un effacement brusque raidirait le relief
-    float pastBrink = 0.5 + s / (0.1 * wavelength);
-    float onSlope = dune.x / (0.5 * top);
-    float slip = clamp(pastBrink, 0.0, 1.0) * clamp(onSlope, 0.0, 1.0);
-    vec2 slipGrad = (pastBrink > 0.0 && pastBrink < 1.0 ? sGrad / (0.1 * wavelength) : vec2(0.0)) * clamp(onSlope, 0.0, 1.0)
-      + clamp(pastBrink, 0.0, 1.0) * (onSlope > 0.0 && onSlope < 1.0 ? dune.yz / (0.5 * top) : vec2(0.0));
-    stossGrad = stossGrad * (1.0 - slip) - stoss * slipGrad;
-    stoss *= 1.0 - slip;
+    vec3 layer = vec3(0.0), slip = vec3(0.0);
+    // Reculée d'au plus DUNE_JITTER + DUNE_HORNS[0] < 1 période, la crête n n'agit qu'entre les phases n - 1 et n + 1
+    // (sa face d'avalanche s'arrête avant n + 1) : seules les deux qui encadrent le point comptent
+    // Une crête ne relève le sol que là où elle dépasse -DUNE_MERGE × top, à moins de reach / pente de sa crête
+    float reach = (1.0 + DUNE_MERGE) * top;
+    for (int j = 0; j < 2; j++) {
+      uint n = first + uint(j);
+      // Décalage aléatoire de la crête le long du vent ; hors de sa portée quel que soit le recul de ses cornes, elle
+      // est ignorée sans évaluer son bruit
+      float pick = hash(uvec2(n, uint(i)));
+      float jitter = DUNE_JITTER * pick;
+      float lead = (phase - base - float(j) - jitter) / norm;
+      if (lead < -reach / DUNE_WINDWARD_SLOPE || lead - horn / norm > reach / DUNE_LEE_SLOPE) continue;
+      // Hauteur de la crête, et son bruit le long de z (direction moyenne des crêtes)
+      float tall = top * mix(DUNE_LOWEST, 1.0, fract(97.0 * pick));
+      vec2 v = noise1(float(kSegment) * q.y, segmentCell.y, n);
+      vec3 m = smoothstepGrad(0.0, DUNE_SEGMENT_EDGE, vec3(v.x, 0.0, g * v.y) + bias);
+      // Distance (m) à la crête le long du vent, positive en aval : ses cornes reculent là où elle s'abaisse
+      float s = lead - horn * (1.0 - m.x) / norm;
+      vec2 sGrad = (phaseGrad - hornGrad * (1.0 - m.x) + horn * m.yz) / norm;
+      vec3 crest = tall * m;
+      // Une crête basse n'a pas encore de face d'avalanche : ses pentes s'adoucissent, elle s'étale en bosse
+      vec3 sharp = smoothstepGrad(0.0, DUNE_SHARP, m);
+      vec3 grow = vec3(mix(DUNE_FLAT, 1.0, sharp.x), (1.0 - DUNE_FLAT) * sharp.yz);
+      vec3 windward = vec3(crest.x + DUNE_WINDWARD_SLOPE * grow.x * s,
+        crest.yz + DUNE_WINDWARD_SLOPE * (grow.x * sGrad + s * grow.yz));
+      vec3 lee = vec3(crest.x - DUNE_LEE_SLOPE * grow.x * s, crest.yz - DUNE_LEE_SLOPE * (grow.x * sGrad + s * grow.yz));
+      vec3 dune = softMin(windward, lee, (DUNE_WINDWARD_SLOPE + DUNE_LEE_SLOPE) * brinkWidth);
+      // Part de face d'avalanche : passé la crête, et jusqu'à mi-hauteur au pied
+      float pastBrink = 0.5 + s / (0.1 * wavelength);
+      float onSlope = dune.x / (0.5 * top);
+      float past = clamp(pastBrink, 0.0, 1.0), on = clamp(onSlope, 0.0, 1.0);
+      vec3 duneSlip = vec3(past * on, (pastBrink > 0.0 && pastBrink < 1.0 ? sGrad / (0.1 * wavelength) : vec2(0.0)) * on
+        + past * (onSlope > 0.0 && onSlope < 1.0 ? dune.yz / (0.5 * top) : vec2(0.0)));
+      softMaxDune(layer, slip, dune, duneSlip, DUNE_MERGE * top);
+    }
+    layer = vec3(layer.x * stoss, layer.yz * stoss + layer.x * stossGrad);
+    // Nappe de volume voisin : celui d'une crête continue, au prorata des tronçons
+    float cover = clamp(0.5 + bias.x, 0.0, 1.0);
+    vec2 coverGrad = cover > 0.0 && cover < 1.0 ? bias.yz : vec2(0.0);
+    float mean = DUNE_SHEET * top * top / wavelength;
+    vec3 sheet = mean * vec3(cover * stoss, coverGrad * stoss + cover * stossGrad);
+    h += mix(sheet, layer, contact);
+    stossGrad = stossGrad * (1.0 - slip.x) - stoss * slip.yz;
+    stoss *= 1.0 - slip.x;
   }
   return h;
 }

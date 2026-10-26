@@ -79,23 +79,47 @@ export const ROCK_WAVELENGTHS = [120, 48, 18, 7, 2.6, 1];
 // ---------- Dunes ----------
 
 /**
- * Couches de dunes, de la plus grande à la plus petite (le shader s'arrête à la première trop fine) : écart entre
- * crêtes (m), étirement le long des crêtes, hauteur maximale (m) et hauteur minimale relative (à 0, des crêtes
- * s'interrompent). Méga-dunes, dunes, petites dunes.
+ * Couches de dunes, de la plus grande à la plus petite (le shader s'arrête à la première trop fine) : écart moyen
+ * entre crêtes (m), hauteur maximale (m), longueur d'onde des bruits qui rendent les crêtes sinueuses et les découpent
+ * en tronçons (en écarts entre crêtes), et seuil de ces tronçons selon l'abondance du sable, de rare à abondant (de
+ * -0,5, crêtes absentes, à 0,5, crêtes presque continues). Grandes dunes isolées, dunes, petites dunes.
  */
 export const DUNE_LAYERS = [
-  { wavelength: 1600, stretch: 3, height: 150, lowest: 0.4 },
-  { wavelength: 210, stretch: 5, height: 20, lowest: 0.1 },
-  { wavelength: 50, stretch: 6, height: 4, lowest: 0.2 },
+  { wavelength: 1100, height: 45, segment: 1.2, sand: [-0.6, -0.2] },
+  { wavelength: 180, height: 14, segment: 1.5, sand: [-0.3, 0.1] },
+  { wavelength: 45, height: 2, segment: 2.5, sand: [-0.5, -0.1] },
 ] as const;
 /** Pentes du versant au vent (10°) et de la face d'avalanche sous le vent (33°, angle de repos du sable). */
 export const DUNE_WINDWARD_SLOPE = Math.tan((10 * Math.PI) / 180);
 export const DUNE_LEE_SLOPE = Math.tan((33 * Math.PI) / 180);
-/** Ondulation commune des crêtes : longueur d'onde et amplitude (m). Faible : les cordons restent longilignes. */
-export const DUNE_WARP_WAVELENGTH = 2000;
-export const DUNE_WARP = 80;
-/** Décalage des crêtes de chaque couche, en fraction de leur écart, selon un bruit à l'échelle de leur longueur. */
-export const DUNE_SINUOSITY = 0.15;
+/**
+ * Torsion des crêtes, commune aux couches : longueur d'onde et amplitude (m) d'un déplacement le long du vent. Elle
+ * fait tourner les crêtes (jusqu'à une trentaine de degrés) et varier leur écart d'une zone à l'autre. La valeur du
+ * même bruit donne l'abondance du sable.
+ */
+export const DUNE_WARP_WAVELENGTH = 5000;
+export const DUNE_WARP = 900;
+/** Sinuosité des crêtes : amplitude (en périodes) du bruit qui les déplace le long du vent. */
+export const DUNE_SINUOSITY = 0.4;
+/** Largeur du seuil des tronçons (unités du bruit) : plus large, les crêtes s'abaissent plus progressivement. */
+export const DUNE_SEGMENT_EDGE = 0.5;
+/**
+ * Une crête plus basse que DUNE_SHARP fois la hauteur de sa couche voit ses pentes réduites, jusqu'à DUNE_FLAT fois
+ * à hauteur nulle : les petites crêtes n'ont pas de face d'avalanche, et leurs extrémités ne laissent pas de fil net.
+ */
+export const DUNE_SHARP = 0.5;
+export const DUNE_FLAT = 0.3;
+/** Hauteur minimale d'une crête, rapportée à la hauteur maximale de sa couche (tirée au hasard pour chaque crête). */
+export const DUNE_LOWEST = 0.55;
+/** Décalage aléatoire de chaque crête le long du vent (périodes) : l'écart entre crêtes devient irrégulier. */
+export const DUNE_JITTER = 0.3;
+/**
+ * Recul sous le vent (périodes) des parties basses d'une crête, de sable rare à abondant : un tronçon isolé devient
+ * une barkhane aux longues cornes, une crête presque continue garde de légers croissants.
+ */
+export const DUNE_HORNS = [0.6, 0.3];
+/** Largeur du raccord adouci entre deux crêtes voisines, rapportée à la hauteur maximale de leur couche. */
+export const DUNE_MERGE = 0.15;
 /** Pentes du relief entre lesquelles les dunes fondent en une nappe de sable, qui le borde en rampe. */
 export const DUNE_CONTACT_SLOPE = [0.08, 0.25];
 
@@ -120,8 +144,8 @@ const GLSL_INTS: Record<string, number> = {
   FIELD_OCTAVES,
   ROCK_OCTAVES: ROCK_WAVELENGTHS.length,
   DUNE_LAYER_COUNT: DUNE_LAYERS.length,
-  // Facteurs d'échelle des dunes : ondulation, puis une paire par couche (voir duneScales)
-  DUNE_SCALE_COUNT: 1 + DUNE_LAYERS.length,
+  // Facteurs d'échelle des dunes : torsion, puis deux par couche (voir duneScales)
+  DUNE_SCALE_COUNT: 1 + 2 * DUNE_LAYERS.length,
 };
 
 const GLSL_FLOATS: Record<string, number | readonly number[]> = {
@@ -142,12 +166,20 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   SNOW_FLATTENING,
   ROCK_WAVELENGTHS,
   DUNE_HEIGHTS: DUNE_LAYERS.map((layer) => layer.height),
-  DUNE_LOWEST: DUNE_LAYERS.map((layer) => layer.lowest),
-  DUNE_MAX_HEIGHT: DUNE_LAYERS.reduce((sum, layer) => sum + layer.height, 0),
+  DUNE_SAND: DUNE_LAYERS.flatMap((layer) => layer.sand),
+  // Chacun des deux raccords adoucis d'une couche (au sol, puis entre ses deux crêtes) peut la relever de DUNE_MERGE / 4
+  DUNE_MAX_HEIGHT: DUNE_LAYERS.reduce((sum, layer) => sum + layer.height, 0) * (1 + DUNE_MERGE / 2),
   DUNE_WINDWARD_SLOPE,
   DUNE_LEE_SLOPE,
   DUNE_WARP,
   DUNE_SINUOSITY,
+  DUNE_SEGMENT_EDGE,
+  DUNE_SHARP,
+  DUNE_FLAT,
+  DUNE_JITTER,
+  DUNE_LOWEST,
+  DUNE_HORNS,
+  DUNE_MERGE,
   DUNE_CONTACT_SLOPE,
   EARTH_RADIUS,
 };

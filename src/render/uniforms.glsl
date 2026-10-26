@@ -45,7 +45,7 @@ uniform vec3 uRockFrac[ROCK_OCTAVES];
 uniform uvec3 uRockCell[ROCK_OCTAVES];
 uniform mat3 uRockRot[ROCK_OCTAVES];
 // Facteurs d'échelle entiers des dunes (voir duneScales() dans src/terrain/origins.ts)
-uniform uvec2 uDuneScale[DUNE_SCALE_COUNT];
+uniform uint uDuneScale[DUNE_SCALE_COUNT];
 
 out vec4 outColor;
 
