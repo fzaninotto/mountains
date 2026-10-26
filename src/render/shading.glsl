@@ -48,23 +48,23 @@ float colorVariation(vec2 x) {
   return a / norm;
 }
 
-// fBm des octaves first à last du relief, décalé, chaque octave effacée sous deux pixels (footprint en m)
-float vegetationNoise(vec2 x, vec2 offset, int first, int last, float footprint) {
+// fBm des octaves first à last du relief, décalé, de gain `gain`. Chaque octave s'efface sous deux pixels (footprint
+// en m) sans que les autres soient renforcées : au loin, le contraste du détail disparaît avec lui
+float vegetationNoise(vec2 x, vec2 offset, int first, int last, float gain, float footprint) {
   vec2 q = x / uScale;
   float wavelength = uScale;
   float a = 0.0, b = 1.0, norm = 0.0;
   for (int i = 0; i <= last; i++) {
     if (i >= first) {
       float fade = smoothstep(2.0 * footprint, 4.0 * footprint, wavelength);
-      if (fade <= 0.0) break;
-      a += fade * b * noised(uOctFrac[i] + q + offset, uOctCell[i]).x;
+      if (fade > 0.0) a += fade * b * noised(uOctFrac[i] + q + offset, uOctCell[i]).x;
       norm += b;
-      b *= 0.6;
+      b *= gain;
     }
     q = 2.0 * (M2 * q);
     wavelength *= 0.5;
   }
-  return norm > 0.0 ? a / norm : 0.0;
+  return a / norm;
 }
 
 // Équivalent 3D de colorVariation pour les pentes raides (octaves de 120 m et 48 m du bruit de la roche)
@@ -81,10 +81,11 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   vec3 c = climate(p.xz);
   float desert = c.y;
 
-  // Roche : grise en climat tempéré, brun-rouge en climat aride, tachée à plusieurs échelles
+  // Roche : gris froid en climat tempéré (sol nu plus brun hors des pentes raides), brun-rouge en climat aride,
+  // tachée à plusieurs échelles
   float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, footprint), 0.0, 1.0);
   vec3 col = mix(
-    mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), tone),
+    mix(vec3(0.065, 0.068, 0.068), vec3(0.17, 0.17, 0.165), tone) * mix(vec3(0.8, 0.77, 0.72), vec3(1.0), steep),
     mix(vec3(0.2, 0.1, 0.055), vec3(0.36, 0.2, 0.11), tone),
     desert
   );
@@ -94,8 +95,13 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   float strataPhase = (p.y + 25.0 * steepVariation) / STRATA_THICKNESS;
   float layer = fract(sin(floor(strataPhase) * 12.9898) * 43758.5453);
   float edge = smoothstep(0.0, 0.15, fract(strataPhase)) * smoothstep(1.0, 0.85, fract(strataPhase));
-  vec3 strataTint = mix(vec3(0.85, 0.86, 0.9), vec3(1.15, 1.04, 0.88), layer) * (0.88 + 0.12 * edge);
+  vec3 strataTint = mix(vec3(0.85, 0.87, 0.9), vec3(1.1, 1.03, 0.92), layer) * (0.88 + 0.12 * edge);
   col *= mix(vec3(1.0), strataTint, steep * smoothstep(2.0 * footprint, 6.0 * footprint, STRATA_THICKNESS));
+
+  // Lichens : taches gris-vert sur la roche tempérée, sous la limite de la végétation
+  float lichen = smoothstep(-0.1, 0.4, rockVariation(p + 31.7)) * (1.0 - desert)
+    * (1.0 - smoothstep(uVegetation, uVegetation + 800.0, p.y));
+  col *= mix(vec3(1.0), vec3(0.8, 0.9, 0.72), 0.6 * lichen);
 
   // Végétation : là où les formes (et non le détail du pixel) sont peu pentues, davantage dans les creux,
   // sous la limite de végétation, hors désert
@@ -103,16 +109,22 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - desert)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
 
-  // Herbe : teinte qui varie doucement de quelques mètres à quelques centaines (frais, sec, plus sombre)
-  float patches = vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, footprint);
-  float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches, 0.0, 1.0);
+  // Herbe : teinte qui varie doucement de quelques mètres à quelques centaines (frais, sec, plus sombre), touffes
+  // de 6 m à 70 cm et brins de 40 cm à 2 cm. Vu en rasant, un pixel couvre plus de sol en profondeur : l'empreinte
+  // du détail fin en tient compte
+  float patches = vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, 0.6, footprint);
+  vec3 view = normalize(vec3(p.x, p.y - uCamY, p.z));
+  float grazingFootprint = footprint / sqrt(max(-dot(view, s.normal), 0.05));
+  float tufts = vegetationNoise(p.xz, vec2(5.3, 61.2), 10, 13, 0.8, grazingFootprint);
+  float blades = vegetationNoise(p.xz, vec2(-12.7, 44.1), 14, 18, 1.0, grazingFootprint);
+  float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches + 0.3 * tufts + 0.3 * blades, 0.0, 1.0);
   vec3 grass = mix(vec3(0.075, 0.115, 0.04), vec3(0.15, 0.15, 0.07), dryness);
-  grass *= 1.0 + 0.18 * vegetationNoise(p.xz, vec2(5.3, 61.2), 9, 13, footprint);
+  grass *= 1.0 + 0.4 * tufts + 0.8 * blades;
 
   // Forêt : massifs dont la couverture varie selon les régions, plutôt dans les vallons et sur les versants
   // que sur les croupes, aux lisières découpées
-  float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, footprint);
-  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, footprint);
+  float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, 0.6, footprint);
+  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, 0.6, footprint);
   float hillside = smoothstep(0.995, 0.93, s.coarse.y);
   float woods = 0.6 * edges + region + 0.5 * s.valley + 0.2 * hillside - 0.25;
   float forest = 0.7 * smoothstep(0.0, 0.15, woods) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
@@ -124,7 +136,9 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   float beachTop = uWater + 1.0 + 3.5 * (0.5 + 0.5 * flatVariation);
   float beach = coastal * (1.0 - smoothstep(beachTop - 1.0, beachTop, p.y));
   float sand = max(beach, desert * lowland(c.x)) * smoothstep(0.6, 0.85, mix(s.normal.y, s.coarse.y, 0.5));
-  col = mix(col, mix(vec3(0.46, 0.4, 0.29), vec3(0.62, 0.44, 0.27), desert), sand);
+  // Sable de plage beige doré, sable du désert ocre orangé
+  vec3 sandColor = mix(vec3(0.76, 0.63, 0.41), vec3(0.76, 0.47, 0.23), desert) * (0.94 + 0.12 * flatVariation);
+  col = mix(col, sandColor, sand);
 
   // Rive mouillée : sable ou terre plus sombres juste au-dessus de l'eau
   float wet = 1.0 - smoothstep(uWater + 0.2, uWater + 1.2 + 0.6 * flatVariation, p.y);

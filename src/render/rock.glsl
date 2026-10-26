@@ -11,6 +11,9 @@ const float ROCK_CARVE = 0.15;
 const float ROCK_CARVE_MAX = 0.15 * (18.0 + 7.0 + 2.6 + 1.0);
 // Le creusement est pentu : sur les parois, la distance est réduite d'autant pour que les rayons ne la traversent pas
 const float ROCK_CARVE_LIPSCHITZ = 2.0;
+// Arrondi des arêtes (en unités du bruit) : vives, les arêtes des grandes octaves courent sur des dizaines de mètres
+// en fils et en arcs nets ; les petites restent vives, comme une roche fracturée
+const float ROCK_CARVE_BEVEL[ROCK_OCTAVES] = float[ROCK_OCTAVES](0.0, 0.0, 0.25, 0.12, 0.0, 0.0);
 
 // Position de p (x, z relatifs à la caméra, y absolu) dans l'espace de l'octave i
 vec3 rockSpace(vec3 p, int i) {
@@ -28,8 +31,10 @@ float rockCarve(vec3 p, float footprint) {
   for (int i = ROCK_CARVE_FIRST; i < ROCK_OCTAVES; i++) {
     float fade = rockFade(i, footprint);
     if (fade <= 0.0) break;
-    // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête vive, comme une roche fracturée
-    carve += fade * ROCK_CARVE * ROCK_WAVELENGTHS[i] * abs(valueNoise3(rockSpace(p, i), uRockCell[i]));
+    // |n| ne s'annule que sur des surfaces : entre deux creux reste une arête
+    float n = valueNoise3(rockSpace(p, i), uRockCell[i]);
+    float bevel = ROCK_CARVE_BEVEL[i];
+    carve += fade * ROCK_CARVE * ROCK_WAVELENGTHS[i] * (sqrt(n * n + bevel * bevel) - bevel);
   }
   return carve;
 }
