@@ -20,6 +20,8 @@ uniform float uVegetation;
 uniform float uSnow;
 uniform float uFog;
 uniform float uExposure;
+// 1 pendant les déplacements : aperçu allégé (ombres et reflets réduits, relief inchangé)
+uniform float uPreview;
 
 // Biomes le long du niveau de relief : (altitude de base, amplitude, gain)
 uniform vec3 uBiomes[BIOME_COUNT];

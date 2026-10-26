@@ -80,10 +80,12 @@ vec3 shadeTerrain(vec3 p, float t, int shadowSteps) {
 vec3 shadeWater(vec3 p, vec3 rd, float t) {
   vec3 r = reflect(rd, vec3(0.0, 1.0, 0.0));
   float fresnel = 0.02 + 0.98 * pow(1.0 - max(-rd.y, 0.0), 5.0);
-  // Reflet allégé : détail plus grossier, budget de pas et ombres réduits, invisibles une fois mêlés au Fresnel
-  float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, 2.0, 200);
-  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, 24), p, r, tr) : sky(r);
-  float shadow = softShadow(p, uSunDir, t, 16);
+  // Reflet allégé : détail plus grossier, budget de pas et ombres réduits, invisibles une fois mêlés au Fresnel.
+  // En aperçu, plus grossier encore et sans ombre portée
+  bool preview = uPreview > 0.5;
+  float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, preview ? 3.0 : 2.0, preview ? 120 : 200);
+  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, preview ? 0 : 24), p, r, tr) : sky(r);
+  float shadow = preview ? 1.0 : softShadow(p, uSunDir, t, 16);
   vec3 deep = vec3(0.01, 0.03, 0.04) * (skyCol + sunCol * shadow * max(uSunDir.y, 0.0) * 2.0);
   return mix(deep, reflection, fresnel);
 }

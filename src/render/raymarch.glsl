@@ -62,11 +62,13 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset, float lodSc
 }
 
 // Ombre douce vers la direction rd (1 : éclairé, 0 : à l'ombre), d'après la distance minimale au relief.
+// maxSteps = 0 : pas d'ombre portée.
 // Le niveau de détail croît SHADOW_LOD fois plus vite le long du rayon d'ombre : au départ le détail
 // est celui du pixel (pas d'acné), plus loin les octaves fines et le creusement s'effacent d'eux-mêmes
 const int SHADOW_STEPS = 56;
 const float SHADOW_LOD = 4.0;
 float softShadow(vec3 ro, vec3 rd, float tOffset, int maxSteps) {
+  if (maxSteps == 0) return 1.0;
   float res = 1.0;
   float t = max(0.5, tOffset * pixelAngle * 2.0);
   for (int i = 0; i < SHADOW_STEPS; i++) {

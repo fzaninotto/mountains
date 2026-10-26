@@ -1,5 +1,5 @@
-import type { FlyCamera } from './camera';
-import type { Renderer } from './render/renderer';
+import type { FlyCamera, View } from './camera';
+import type { Renderer, Target } from './render/renderer';
 
 // Banc de mesure des performances, lancé en ouvrant l'application avec #bench.
 // Il rend des vues fixes à une résolution fixe, mesure le temps GPU de chacune et compare l'image à une référence
@@ -27,11 +27,27 @@ export interface BenchResult {
   ms: number;
   /** Écart moyen par canal avec l'image de référence (0 à 255), null sans référence. */
   diff: number | null;
+  /** Temps médian en mode aperçu (ms), sans comparaison d'image. */
+  previewMs: number;
 }
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[sorted.length >> 1];
+}
+
+/** Temps médian de rendu d'une image (ms), après une première image non mesurée (compilation, mise en cache). */
+function measure(renderer: Renderer, target: Target, view: View, preview: boolean): number {
+  renderer.renderRows(target, view, 0, HEIGHT, WIDTH, HEIGHT, preview);
+  renderer.finish(target);
+  const times: number[] = [];
+  for (let i = 0; i < RUNS; i++) {
+    const start = performance.now();
+    renderer.renderRows(target, view, 0, HEIGHT, WIDTH, HEIGHT, preview);
+    renderer.finish(target);
+    times.push(performance.now() - start);
+  }
+  return Math.round(median(times) * 10) / 10;
 }
 
 function meanAbsDiff(a: Uint8Array, b: Uint8Array): number {
@@ -85,33 +101,31 @@ export async function runBenchmark(renderer: Renderer, camera: FlyCamera, output
     camera.placeAboveGround(view.alt);
     const cameraView = camera.view();
 
-    // Première image : compilation et mise en cache, non mesurée
-    renderer.renderRows(target, cameraView, 0, HEIGHT);
-    renderer.finish(target);
-    const times: number[] = [];
-    for (let i = 0; i < RUNS; i++) {
-      const start = performance.now();
-      renderer.renderRows(target, cameraView, 0, HEIGHT);
-      renderer.finish(target);
-      times.push(performance.now() - start);
-    }
+    // L'aperçu est mesuré d'abord : l'image comparée à la référence est celle de la passe principale
+    const previewMs = measure(renderer, target, cameraView, true);
+    const ms = measure(renderer, target, cameraView, false);
 
     const image = downsample(renderer.readPixels(target));
     newBaseline[view.name] = toBase64(image);
     const reference = baseline[view.name];
     results.push({
       view: view.name,
-      ms: Math.round(median(times) * 10) / 10,
+      ms,
       diff: reference ? Math.round(meanAbsDiff(image, fromBase64(reference)) * 100) / 100 : null,
+      previewMs,
     });
   }
 
   if (save) localStorage.setItem(BASELINE_KEY, JSON.stringify(newBaseline));
-  const total = Math.round(results.reduce((sum, r) => sum + r.ms, 0) * 10) / 10;
-  (window as unknown as { __bench: unknown }).__bench = { results, total, saved: save };
+  const sum = (values: number[]) => Math.round(values.reduce((a, b) => a + b, 0) * 10) / 10;
+  const total = sum(results.map((r) => r.ms));
+  const previewTotal = sum(results.map((r) => r.previewMs));
+  (window as unknown as { __bench: unknown }).__bench = { results, total, previewTotal, saved: save };
   output.textContent = [
     `Banc de mesure (${WIDTH}×${HEIGHT}, médiane de ${RUNS})${save ? ' — référence enregistrée' : ''}`,
-    ...results.map((r) => `${r.view} : ${r.ms} ms${r.diff === null ? '' : ` · écart ${r.diff}`}`),
-    `total : ${total} ms`,
+    ...results.map(
+      (r) => `${r.view} : ${r.ms} ms${r.diff === null ? '' : ` · écart ${r.diff}`} · aperçu : ${r.previewMs} ms`,
+    ),
+    `total : ${total} ms · aperçu : ${previewTotal} ms`,
   ].join('\n');
 }

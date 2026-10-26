@@ -116,7 +116,15 @@ export class FrameScheduler {
     this.movingScale = Math.min(this.movingScale, params.movingScale);
     this.previewWidth = Math.max(1, Math.min(this.preview.width, Math.round(canvas.width * this.movingScale)));
     this.previewHeight = Math.max(1, Math.min(this.preview.height, Math.round(canvas.height * this.movingScale)));
-    renderer.renderRows(this.preview, this.camera.view(), 0, this.previewHeight, this.previewWidth, this.previewHeight);
+    renderer.renderRows(
+      this.preview,
+      this.camera.view(),
+      0,
+      this.previewHeight,
+      this.previewWidth,
+      this.previewHeight,
+      true,
+    );
     renderer.copy(this.preview, null, this.previewWidth, this.previewHeight);
     this.dirty = false;
     this.recordPreview(now);

@@ -23,8 +23,10 @@ void main() {
   float tWater = rd.y < 0.0 ? (uWater - ro.y) / rd.y : -1.0;
   float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0, 1.0, 400);
 
+  // En aperçu, ombres moins précises ; le relief (march, calcNormal) reste celui de l'image nette
+  int shadowSteps = uPreview > 0.5 ? 12 : SHADOW_STEPS;
   vec3 col;
-  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, t, SHADOW_STEPS), ro, rd, t);
+  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, t, shadowSteps), ro, rd, t);
   else if (tWater > 0.0) col = applyFog(shadeWater(ro + rd * tWater, rd, tWater), ro, rd, tWater);
   else col = sky(rd);
 

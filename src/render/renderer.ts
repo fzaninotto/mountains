@@ -41,7 +41,7 @@ const TERRAIN_SOURCE = [
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal',
   'uSunDir', 'uScale', 'uBiomeScale', 'uMountainBias', 'uDesertBias', 'uDetail', 'uStep', 'uWater', 'uVegetation',
-  'uSnow', 'uFog', 'uExposure', 'uBiomes', 'uMaxH',
+  'uSnow', 'uFog', 'uExposure', 'uPreview', 'uBiomes', 'uMaxH',
   'uOctFrac', 'uOctCell', 'uFieldFrac', 'uFieldCell', 'uRockFrac', 'uRockCell', 'uRockRot', 'uDuneScale',
 ] as const;
 
@@ -99,8 +99,17 @@ export class Renderer {
   /**
    * Calcule les lignes [y0, y1[ de l'image : une image nette peut ainsi être étalée sur plusieurs frames.
    * width × height : portion utilisée de la cible (coin inférieur gauche), toute la cible par défaut.
+   * preview : aperçu allégé pendant les déplacements (ombres et reflets réduits).
    */
-  renderRows(target: Target, view: View, y0: number, y1: number, width = target.width, height = target.height) {
+  renderRows(
+    target: Target,
+    view: View,
+    y0: number,
+    y1: number,
+    width = target.width,
+    height = target.height,
+    preview = false,
+  ) {
     const gl = this.gl;
     gl.useProgram(this.terrainProgram);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
@@ -108,6 +117,7 @@ export class Renderer {
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(0, y0, width, y1 - y0);
     this.setTerrainUniforms(view, width, height);
+    gl.uniform1f(this.uniforms.uPreview, preview ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
   }
