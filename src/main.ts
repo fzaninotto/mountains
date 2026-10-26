@@ -7,6 +7,7 @@ import { createGui } from './gui';
 import { updateHud } from './hud';
 import { applyStartView, viewHash } from './viewUrl';
 import { runBenchmark } from './bench';
+import { runCapture } from './capture';
 
 /** Rayon (m) dans lequel « Aller ailleurs » choisit une position. */
 const TELEPORT_RANGE = 500_000;
@@ -43,10 +44,13 @@ const gui = createGui({
   exportImage: () => scheduler.requestExport(),
 });
 
-// #bench lance le banc de mesure à la place de la boucle d'animation (#bench&save enregistre la référence)
+// #bench lance le banc de mesure à la place de la boucle d'animation (#bench&save enregistre la référence) ;
+// #capture rend et enregistre les vues de captures/views.json (développement seulement)
 const benchmark = new URLSearchParams(window.location.hash.slice(1));
 if (benchmark.has('bench')) {
   runBenchmark(renderer, camera, hud, benchmark.has('save'));
+} else if (benchmark.has('capture')) {
+  runCapture(renderer, camera, hud);
 } else {
   requestAnimationFrame(frame);
 }
