@@ -26,11 +26,9 @@ uniform vec2 uOctFrac[MAX_OCT];
 uniform uvec2 uOctCell[MAX_OCT];
 uniform vec2 uMatFrac;
 uniform uvec2 uMatCell;
-uniform vec2 uBiomeFrac;
-uniform uvec2 uBiomeCell;
-uniform vec2 uAridFrac;
-uniform uvec2 uAridCell;
-uniform uvec2 uDuneScale[3];
+uniform vec2 uFieldFrac[9];
+uniform uvec2 uFieldCell[9];
+uniform uvec2 uDuneScale[4];
 
 out vec4 outColor;
 
@@ -41,7 +39,9 @@ const float TMAX = 80000.0;
 const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
 const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
-const float ARIDITY_SCALE_RATIO = 1.37;
+const int FIELD_OCTAVES = 3;
+const float FIELD_RATIO[3] = float[3](1.0, 1.37, 0.55);
+const float RANGE_WARP = 0.35;
 const float DUNE_HEIGHT[2] = float[2](22.0, 4.0);
 const float DUNE_WARP = 250.0;
 
@@ -80,19 +80,34 @@ float snowSmoothing(float h, float slope) {
   return SNOW_FLATTENING * smoothstep(uSnow - 100.0, uSnow + 150.0, h) * (1.0 - smoothstep(0.35, 0.7, slope));
 }
 
-float biomeNoise(vec2 q, uvec2 cell) {
-  return (noised(q, cell).x + 0.5 * noised(2.0 * q + vec2(0.37, 0.71), 2u * cell).x) / 1.5;
+// Champs de biomes à très grande échelle (0 : continent, 1 : aridité, 2 : chaînes de montagnes),
+// chacun un fBm de quelques octaves tournées
+float fieldNoise(vec2 x, int field) {
+  vec2 q = x / (uBiomeScale * FIELD_RATIO[field]);
+  float a = 0.0, b = 1.0, norm = 0.0;
+  for (int i = 0; i < FIELD_OCTAVES; i++) {
+    int k = field * FIELD_OCTAVES + i;
+    a += b * noised(uFieldFrac[k] + q, uFieldCell[k]).x;
+    norm += b;
+    b *= 0.5;
+    q = 2.0 * (M2 * q);
+  }
+  return a / norm;
 }
 
-// Niveau de relief : 0 = mer, puis plage, plaine, moyenne et haute montagne jusqu'à 1. Champ continu à très
-// grande échelle : on passe toujours d'un biome au suivant progressivement, sans frontière
-float reliefLevel(vec2 x) {
-  return smoothstep(-0.45, 0.45, biomeNoise(uBiomeFrac + x / uBiomeScale, uBiomeCell) + uMountainBias);
-}
-
-// Poids du désert (0 à 1), sur un second champ indépendant
-float aridity(vec2 x) {
-  return smoothstep(0.1, 0.45, biomeNoise(uAridFrac + x / (uBiomeScale * ARIDITY_SCALE_RATIO), uAridCell) + uDesertBias);
+// (niveau de relief, poids du désert).
+// Niveau de relief : 0 = mer, puis plage, plaine, collines, moyenne et haute montagne jusqu'à 1.
+// Le continent sépare la mer des terres ; les montagnes suivent les crêtes d'un troisième champ, ondulé
+// par les deux premiers, ce qui dessine des chaînes. Tout est continu : aucune frontière entre biomes
+vec2 climate(vec2 x) {
+  float continent = fieldNoise(x, 0);
+  float dryness = fieldNoise(x, 1);
+  float warp = RANGE_WARP * uBiomeScale * FIELD_RATIO[2];
+  float range = fieldNoise(x + warp * vec2(continent, dryness), 2);
+  float coast = smoothstep(-0.15, 0.05, continent);
+  float inland = smoothstep(0.0, 0.25, continent);
+  float mountain = smoothstep(0.62, 1.0, 1.0 - abs(range) + uMountainBias) * inland;
+  return vec2(0.3 * coast + 0.7 * mountain, smoothstep(0.05, 0.35, dryness + uDesertBias));
 }
 
 // Paramètres du biome (altitude de base, amplitude, gain) interpolés le long du niveau de relief
@@ -116,16 +131,15 @@ float duneWeight(float level, float desert) {
 // Les fréquences (uDuneScale) sont des multiples entiers de celle des biomes, ce qui permet de réutiliser
 // son origine en double précision. Les couches plus fines que la plus petite longueur d'onde affichable s'effacent
 float dunes(vec2 x, float minWavelength) {
-  vec2 q = uBiomeFrac + x / uBiomeScale;
+  vec2 q = uFieldFrac[0] + x / uBiomeScale;
   vec2 kw = vec2(uDuneScale[0]);
-  uvec2 cw = uDuneScale[0] * uBiomeCell;
+  uvec2 cw = uDuneScale[0] * uFieldCell[0];
   vec2 warp = DUNE_WARP / uBiomeScale * vec2(noised(kw * q + vec2(1.3, 7.1), cw).x, noised(kw * q + vec2(4.7, 2.2), cw).x);
-  // Hauteur des crêtes variable, sur le bruit des biomes 64 fois plus fin (~600 m)
-  float crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(64.0 * q + vec2(5.3, 1.9), 64u * uBiomeCell).x);
+  float crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(vec2(uDuneScale[1]) * q + vec2(5.3, 1.9), uDuneScale[1] * uFieldCell[0]).x);
   float h = 0.0;
   for (int i = 0; i < 2; i++) {
-    vec2 k = vec2(uDuneScale[i + 1]);
-    float n = noised(k * (q + warp) + vec2(3.1, 8.3), uDuneScale[i + 1] * uBiomeCell).x;
+    vec2 k = vec2(uDuneScale[i + 2]);
+    float n = noised(k * (q + warp) + vec2(3.1, 8.3), uDuneScale[i + 2] * uFieldCell[0]).x;
     float wavelength = uBiomeScale / k.x;
     // Arête arrondie, d'autant plus que la dune est petite à l'écran, pour éviter le crénelage des crêtes
     float bevel = 0.04 + 0.5 * minWavelength / wavelength;
@@ -137,8 +151,9 @@ float dunes(vec2 x, float minWavelength) {
 
 // fBm à dérivées : les pentes accumulées atténuent les octaves suivantes, ce qui imite l'érosion
 float terrain(vec2 x, float octaves) {
-  float level = reliefLevel(x);
-  float sand = duneWeight(level, aridity(x));
+  vec2 c = climate(x);
+  float level = c.x;
+  float sand = duneWeight(level, c.y);
   vec3 biome = biomeAt(level);
   float base = biome.x, height = biome.y * (1.0 - 0.5 * sand), gain = biome.z;
   vec2 q = x / uScale;
@@ -252,7 +267,8 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
 
 vec3 terrainAlbedo(vec3 p, vec3 n) {
   float variation = noised(uMatFrac + p.xz / MATERIAL_SCALE, uMatCell).x;
-  float desert = aridity(p.xz);
+  vec2 c = climate(p.xz);
+  float desert = c.y;
 
   // Roche : grise en climat tempéré, ocre en climat aride
   vec3 col = mix(
@@ -267,7 +283,7 @@ vec3 terrainAlbedo(vec3 p, vec3 n) {
 
   // Sable : sur les rivages en pente douce, et sur tout le plat en désert
   float shore = 1.0 - smoothstep(uWater + 3.0, uWater + 10.0 + variation * 4.0, p.y);
-  float sand = max(shore, desert * lowland(reliefLevel(p.xz))) * smoothstep(0.6, 0.85, n.y);
+  float sand = max(shore, desert * lowland(c.x)) * smoothstep(0.6, 0.85, n.y);
   col = mix(col, mix(vec3(0.42, 0.36, 0.25), vec3(0.5, 0.32, 0.16), desert), sand);
 
   float snow = smoothstep(uSnow - 150.0, uSnow + 150.0, p.y + variation * 300.0)

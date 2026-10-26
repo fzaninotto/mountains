@@ -25,7 +25,7 @@ export function createGui(actions: Actions): GUI {
   relief.add(params, 'step', 0.2, 0.9, 0.01).name('Pas du raymarching').onChange(viewChanged);
 
   const biome = gui.addFolder('Biomes');
-  biome.add(params, 'biomeScale', 5000, 150000, 1000).name('Taille des biomes (m)').onChange(terrainChanged);
+  biome.add(params, 'biomeScale', 20000, 400000, 5000).name('Taille des biomes (m)').onChange(terrainChanged);
   biome.add(params, 'mountainCoverage', 0, 1, 0.01).name('Part de montagne').onChange(terrainChanged);
   biome.add(params, 'desertCoverage', 0, 1, 0.01).name('Part de désert').onChange(terrainChanged);
 

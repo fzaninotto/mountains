@@ -14,9 +14,9 @@ export interface Target {
 
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uBiomes', 'uBiomeScale', 'uMountainBias',
-  'uDesertBias', 'uAridFrac', 'uAridCell', 'uDuneScale',
+  'uDesertBias', 'uFieldFrac', 'uFieldCell', 'uDuneScale',
   'uMaxH', 'uDetail', 'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell',
-  'uMatFrac', 'uMatCell', 'uBiomeFrac', 'uBiomeCell',
+  'uMatFrac', 'uMatCell',
 ] as const;
 
 type TerrainUniforms = Record<(typeof TERRAIN_UNIFORMS)[number], WebGLUniformLocation | null>;
@@ -93,10 +93,8 @@ export class Renderer {
     gl.uniform2uiv(u.uOctCell, view.octaves.cell);
     gl.uniform2fv(u.uMatFrac, view.material.frac);
     gl.uniform2uiv(u.uMatCell, view.material.cell);
-    gl.uniform2fv(u.uBiomeFrac, view.biome.frac);
-    gl.uniform2uiv(u.uBiomeCell, view.biome.cell);
-    gl.uniform2fv(u.uAridFrac, view.aridity.frac);
-    gl.uniform2uiv(u.uAridCell, view.aridity.cell);
+    gl.uniform2fv(u.uFieldFrac, view.fields.frac);
+    gl.uniform2uiv(u.uFieldCell, view.fields.cell);
     gl.uniform2uiv(u.uDuneScale, duneScales());
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);

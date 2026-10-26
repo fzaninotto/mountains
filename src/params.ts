@@ -29,7 +29,7 @@ export const params: Params = {
   scale: 6000,
   height: 2200,
   gain: 0.5,
-  biomeScale: 40000,
+  biomeScale: 120000,
   mountainCoverage: 0.5,
   desertCoverage: 0.5,
   detail: 1,

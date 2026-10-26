@@ -3,7 +3,7 @@ import { params } from './params';
 import { FlyCamera, type View } from './camera';
 import { Renderer, type Target } from './renderer';
 import { createGui } from './gui';
-import { aridity, reliefLevel } from './noise';
+import { climate } from './noise';
 
 interface Job {
   target: Target;
@@ -118,7 +118,7 @@ function biomeName(level: number, desert: number): string {
 function updateHud() {
   const clearance = camera.y - camera.ground();
   hud.textContent = [
-    biomeName(reliefLevel(camera.x, camera.z), aridity(camera.x, camera.z)),
+    biomeName(...climate(camera.x, camera.z)),
     `Altitude ${Math.round(camera.y)} m`,
     `sol +${Math.round(clearance)} m`,
     `${Math.round(camera.speed())} m/s`,

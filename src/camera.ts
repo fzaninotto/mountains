@@ -1,7 +1,5 @@
 import { params } from './params';
-import {
-  ARIDITY_SALT, ARIDITY_SCALE_RATIO, gridOrigin, MATERIAL_SCALE, octaveOrigins, terrainHeight, type NoiseOrigin,
-} from './noise';
+import { fieldOrigins, gridOrigin, MATERIAL_SCALE, octaveOrigins, terrainHeight, type NoiseOrigin } from './noise';
 
 export interface View {
   camY: number;
@@ -9,8 +7,7 @@ export interface View {
   focal: number;
   octaves: NoiseOrigin;
   material: NoiseOrigin;
-  biome: NoiseOrigin;
-  aridity: NoiseOrigin;
+  fields: NoiseOrigin;
 }
 
 const CLEARANCE = 2;
@@ -96,8 +93,7 @@ export class FlyCamera {
       focal: 1 / Math.tan((params.fov * Math.PI) / 360),
       octaves: octaveOrigins(this.x, this.z),
       material: gridOrigin(this.x, this.z, MATERIAL_SCALE),
-      biome: gridOrigin(this.x, this.z, params.biomeScale),
-      aridity: gridOrigin(this.x, this.z, params.biomeScale * ARIDITY_SCALE_RATIO, ARIDITY_SALT),
+      fields: fieldOrigins(this.x, this.z),
     };
   }
 
