@@ -59,6 +59,10 @@ export class Renderer {
   private readonly uniforms: TerrainUniforms;
   private readonly blitProgram: WebGLProgram;
   private readonly sourceScale: WebGLUniformLocation | null;
+  private fence: WebGLSync | null = null;
+  private submittedAt = 0;
+  /** Durée du dernier travail GPU terminé (ms), voir gpuIdle(). */
+  lastGpuTime = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, depth: false });
@@ -135,6 +139,31 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, source.texture);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /**
+   * Marque la fin du travail soumis pour cette frame. gpuIdle() dira quand le GPU l'aura terminé.
+   */
+  markSubmitted() {
+    const gl = this.gl;
+    if (this.fence) gl.deleteSync(this.fence);
+    this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    this.submittedAt = performance.now();
+    gl.flush();
+  }
+
+  /**
+   * true si le GPU a terminé le travail marqué par markSubmitted() ; ne bloque jamais.
+   * lastGpuTime donne alors sa durée approximative (ms, à une frame près).
+   */
+  gpuIdle(): boolean {
+    if (!this.fence) return true;
+    const gl = this.gl;
+    if (gl.getSyncParameter(this.fence, gl.SYNC_STATUS) !== gl.SIGNALED) return false;
+    gl.deleteSync(this.fence);
+    this.fence = null;
+    this.lastGpuTime = performance.now() - this.submittedAt;
+    return true;
   }
 
   /**

@@ -57,7 +57,7 @@ function frame(now: number) {
   const dt = Math.min(0.5, (now - last) / 1000);
   last = now;
   if (camera.update(dt)) scheduler.invalidate();
-  scheduler.frame(now, dt);
+  scheduler.frame(now);
   updateHud(hud, camera, scheduler.status());
   requestAnimationFrame(frame);
 }

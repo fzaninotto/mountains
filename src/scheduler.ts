@@ -13,6 +13,8 @@ const MIN_MOVING_SCALE = 0.05;
 const MOVING_SCALE_STEP = 0.01;
 /** Nombre d'intervalles dont la médiane pilote la résolution de l'aperçu. */
 const INTERVAL_WINDOW = 5;
+/** Au-delà de cet écart entre deux aperçus (ms), le mouvement s'était interrompu. */
+const MOTION_GAP = 250;
 
 /** Image calculée par bandes, de bas en haut. */
 interface Job {
@@ -36,9 +38,9 @@ export class FrameScheduler {
   private pixelBudget = 250_000;
   /** Résolution de l'aperçu, ajustée en continu pour tenir params.targetFps. */
   private movingScale = params.movingScale;
-  private frameIndex = 0;
-  private lastPreviewFrame = -1;
-  private lastPreviewAt = 0;
+  private lastPreviewAt = -Infinity;
+  /** Le dernier travail soumis était une bande d'image nette ou d'export. */
+  private jobSubmitted = false;
   /** Instants des aperçus affichés pendant la dernière seconde : la cadence réellement perçue. */
   private readonly previewTimes: number[] = [];
   /** Derniers intervalles entre aperçus consécutifs (s). */
@@ -80,10 +82,14 @@ export class FrameScheduler {
     return this.sharpDone ? 'Net' : `Aperçu ${Math.round(this.movingScale * 100)} % · ${this.previewFps()} img/s`;
   }
 
-  /** Dessine ce qui doit l'être pour cette frame ; dt : durée écoulée depuis la précédente (s). */
-  frame(now: number, dt: number) {
-    this.frameIndex++;
-    if (this.refineJob || this.exportJob) this.adaptPixelBudget(dt);
+  /** Dessine ce qui doit l'être pour cette frame, si le GPU est disponible. */
+  frame(now: number) {
+    // Rien n'est soumis tant que le GPU n'a pas fini le rendu précédent : sinon le navigateur empile des images
+    // d'avance puis bloque d'un coup, et le mouvement devient saccadé. La caméra, elle, avance à chaque frame,
+    // et chaque rendu montre sa position au moment où il est lancé
+    if (!this.renderer.gpuIdle()) return;
+    if (this.jobSubmitted) this.adaptPixelBudget(this.renderer.lastGpuTime);
+    this.jobSubmitted = false;
     this.resize();
 
     if (this.exportJob) {
@@ -96,7 +102,10 @@ export class FrameScheduler {
       this.drawPreview(now);
     } else if (!this.sharpDone && this.preview) {
       this.refine(now);
+    } else {
+      return;
     }
+    this.renderer.markSubmitted();
   }
 
   private resize() {
@@ -153,6 +162,7 @@ export class FrameScheduler {
 
   /** Calcule la bande suivante ; renvoie true quand l'image est complète. */
   private advance(job: Job): boolean {
+    this.jobSubmitted = true;
     const rows = Math.max(1, Math.floor(this.pixelBudget / job.target.width));
     const end = Math.min(job.target.height, job.row + rows);
     this.renderer.renderRows(job.target, job.view, job.row, end);
@@ -160,22 +170,22 @@ export class FrameScheduler {
     return end >= job.target.height;
   }
 
-  private adaptPixelBudget(dt: number) {
-    if (dt > 0.045) this.pixelBudget = Math.max(20_000, this.pixelBudget * 0.7);
-    else if (dt < 0.025) this.pixelBudget = Math.min(4_000_000, this.pixelBudget * 1.15);
+  // Une bande doit tenir en une trentaine de ms de GPU, pour que l'interface reste réactive
+  private adaptPixelBudget(gpuTime: number) {
+    if (gpuTime > 40) this.pixelBudget = Math.max(20_000, this.pixelBudget * 0.7);
+    else if (gpuTime < 20) this.pixelBudget = Math.min(4_000_000, this.pixelBudget * 1.15);
   }
 
   private recordPreview(now: number) {
-    // La durée n'est mesurée qu'entre deux aperçus consécutifs : le GPU travaille en différé, et seul un
-    // enchaînement d'aperçus fait sentir sa charge sur la cadence des images
-    if (this.lastPreviewFrame === this.frameIndex - 1) {
+    // L'intervalle n'est mesuré que pendant un mouvement continu : c'est alors la cadence réelle des aperçus,
+    // puisqu'un aperçu n'est lancé qu'une fois le précédent terminé par le GPU
+    if (now - this.lastPreviewAt < MOTION_GAP) {
       // Médiane des derniers intervalles : une image ponctuellement lente ne doit pas effondrer la résolution
       this.previewIntervals.push((now - this.lastPreviewAt) / 1000);
       if (this.previewIntervals.length > INTERVAL_WINDOW) this.previewIntervals.shift();
       const sorted = [...this.previewIntervals].sort((a, b) => a - b);
       this.adaptMovingScale(sorted[sorted.length >> 1]);
     }
-    this.lastPreviewFrame = this.frameIndex;
     this.lastPreviewAt = now;
     this.previewTimes.push(now);
     while (now - this.previewTimes[0] > 1000) this.previewTimes.shift();
