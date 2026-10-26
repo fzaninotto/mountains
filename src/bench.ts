@@ -99,6 +99,7 @@ export async function runBenchmark(renderer: Renderer, camera: FlyCamera, output
     camera.yaw = view.yaw;
     camera.pitch = view.pitch;
     camera.placeAboveGround(view.alt);
+    await camera.settle();
     const cameraView = camera.view();
 
     // L'aperçu est mesuré d'abord : l'image comparée à la référence est celle de la passe principale

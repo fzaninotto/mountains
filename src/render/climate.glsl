@@ -1,6 +1,4 @@
 // ---------- Biomes, falaises et dunes ----------
-// Identique à src/terrain/climate.ts et src/terrain/dunes.ts.
-
 // fBm d'un champ de biomes (0 : continent, 1 : aridité, 2 : chaînes de montagnes, 3 : îles), environ dans [-1, 1]
 float fieldNoise(vec2 x, int field) {
   vec2 q = x / (uBiomeScale * FIELD_RATIO[field]);

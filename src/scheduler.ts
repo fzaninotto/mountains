@@ -118,8 +118,9 @@ export class FrameScheduler {
   frame(now: number) {
     // Rien n'est soumis tant que le GPU n'a pas fini le rendu précédent : sinon le navigateur empile des images
     // d'avance puis bloque d'un coup, et le mouvement devient saccadé. La caméra, elle, avance à chaque frame,
-    // et chaque rendu montre sa position au moment où il est lancé
-    if (!this.renderer.gpuIdle()) return;
+    // et chaque rendu montre sa position au moment où il est lancé. Rien non plus tant que la caméra
+    // attend la sonde qui la place au-dessus du sol
+    if (!this.camera.ready() || !this.renderer.gpuIdle()) return;
     if (this.jobSubmitted) this.adaptPixelBudget(this.renderer.lastGpuTime);
     this.jobSubmitted = false;
     this.resize();
@@ -174,7 +175,8 @@ export class FrameScheduler {
 
   private refine(now: number) {
     if (!this.refineJob) {
-      if (now - this.changedAt <= REFINE_DELAY) return;
+      // L'image nette attend aussi la sonde de la position finale (soleil caché ou non)
+      if (now - this.changedAt <= REFINE_DELAY || !this.camera.settled()) return;
       this.startLevel(this.camera.view());
     }
     const job = this.refineJob!;

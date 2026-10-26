@@ -9,11 +9,12 @@ import raymarchSource from './raymarch.glsl?raw';
 import atmosphereSource from './atmosphere.glsl?raw';
 import shadingSource from './shading.glsl?raw';
 import mainSource from './terrain.frag.glsl?raw';
+import probeSource from './probe.frag.glsl?raw';
 import { params, sunDirection } from '../params';
 import type { View } from '../camera';
 import { glslConstants } from '../terrain/constants';
 import { biomes, desertBias, maxTerrainHeight, mountainBias } from '../terrain/biomes';
-import { duneScales } from '../terrain/dunes';
+import { duneScales, fieldOrigins, octaveOrigins, rockOrigins, type Origins } from '../terrain/origins';
 
 /** Image intermédiaire : texture et framebuffer qui la cible. */
 export interface Target {
@@ -23,29 +24,50 @@ export interface Target {
   height: number;
 }
 
-// Le shader de terrain est assemblé à partir de modules, précédés des constantes partagées avec le CPU
-const TERRAIN_SOURCE = [
-  '#version 300 es',
-  'precision highp float;',
-  'precision highp int;',
-  glslConstants(),
-  uniformsSource,
-  noiseSource,
-  climateSource,
-  rockSource,
-  heightSource,
-  raymarchSource,
-  atmosphereSource,
-  shadingSource,
-  mainSource,
-].join('\n');
+// Le shader de terrain est assemblé à partir de modules, précédés des constantes générées depuis
+// terrain/constants.ts ; celui des sondes reprend le relief avec un autre main()
+const HEADER = ['#version 300 es', 'precision highp float;', 'precision highp int;', glslConstants()];
+const RELIEF = [uniformsSource, noiseSource, climateSource, rockSource, heightSource];
+const TERRAIN_SOURCE = [...HEADER, ...RELIEF, raymarchSource, atmosphereSource, shadingSource, mainSource].join('\n');
+const PROBE_SOURCE = [...HEADER, ...RELIEF, probeSource].join('\n');
 
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uJitter', 'uSunVisible', 'uSunShadow',
   'uSunDir', 'uScale', 'uBiomeScale', 'uMountainBias', 'uDesertBias', 'uDetail', 'uStep', 'uWater', 'uVegetation',
   'uSnow', 'uFog', 'uExposure', 'uPreview', 'uLodHeight', 'uBiomes', 'uMaxH',
   'uOctFrac', 'uOctCell', 'uFieldFrac', 'uFieldCell', 'uRockFrac', 'uRockCell', 'uRockRot', 'uDuneScale',
+  'uAhead', 'uRelative',
 ] as const;
+
+/** Point sondé sur le GPU. */
+export interface ProbeRequest {
+  x: number;
+  z: number;
+  /** Altitude (m), ou hauteur au-dessus du sol ou de l'eau si relative. */
+  y: number;
+  relative?: boolean;
+  /** Trajet horizontal prévu (m), dont le point le plus haut est relevé (groundAhead). */
+  ahead?: readonly [number, number];
+}
+
+/** Réponse d'une sonde, calculée par probe.frag.glsl (float32). */
+export interface ProbeResult {
+  /** Altitude du sol (m), sans l'eau. */
+  ground: number;
+  /** Niveau de relief, poids du désert et poids des falaises (voir climate()). */
+  climate: [number, number, number];
+  /** Sol le plus haut sur le trajet prévu, point de départ compris (m). */
+  groundAhead: number;
+  /** Part visible du soleil (0 à 1), qui règle l'éblouissement. */
+  sunVisible: number;
+  /** Distance (m) et profondeur (m) sous son sommet du rayon vers le soleil caché par le relief, [0, 0] sinon. */
+  sunShadow: [number, number];
+}
+
+/** Valeurs calculées par sonde, une par pixel : sol, climat (3), sol du trajet, soleil (3). */
+const PROBE_VALUES = 8;
+/** Nombre maximal de sondes d'un même lot (lignes de la cible). */
+const MAX_PROBES = 64;
 
 /** Nombre de rendus moyennés pour lisser une image nette (le premier sans décalage). */
 export const SMOOTHING_PASSES = 6;
@@ -75,6 +97,9 @@ export class Renderer {
   private readonly uniforms: TerrainUniforms;
   private readonly blitProgram: WebGLProgram;
   private readonly sourceScale: WebGLUniformLocation | null;
+  private readonly probeProgram: WebGLProgram;
+  private readonly probeUniforms: TerrainUniforms;
+  private readonly probeTarget: Target;
   private fence: WebGLSync | null = null;
   private submittedAt = 0;
   /** Durée du dernier travail GPU terminé (ms), voir gpuIdle(). */
@@ -86,11 +111,12 @@ export class Renderer {
     this.gl = gl;
     this.maxSize = Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0]);
     this.terrainProgram = this.createProgram(TERRAIN_SOURCE);
-    this.uniforms = Object.fromEntries(
-      TERRAIN_UNIFORMS.map((name) => [name, gl.getUniformLocation(this.terrainProgram, name)]),
-    ) as TerrainUniforms;
+    this.uniforms = this.uniformLocations(this.terrainProgram);
     this.blitProgram = this.createProgram(blitSource);
     this.sourceScale = gl.getUniformLocation(this.blitProgram, 'uSourceScale');
+    this.probeProgram = this.createProgram(PROBE_SOURCE);
+    this.probeUniforms = this.uniformLocations(this.probeProgram);
+    this.probeTarget = this.ensureTarget(null, PROBE_VALUES, MAX_PROBES);
     // Le triangle plein écran est généré par gl_VertexID : aucun tampon, mais WebGL2 exige un VAO lié
     gl.bindVertexArray(gl.createVertexArray());
   }
@@ -142,12 +168,83 @@ export class Renderer {
     gl.viewport(0, 0, width, height);
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(0, y0, width, y1 - y0);
-    this.setTerrainUniforms(view, width, height);
-    gl.uniform1f(this.uniforms.uPreview, preview ? 1 : 0);
-    gl.uniform1f(this.uniforms.uLodHeight, lodHeight);
-    gl.uniform2f(this.uniforms.uJitter, jitter[0], jitter[1]);
+    const u = this.uniforms;
+    this.setWorldUniforms(u, view);
+    gl.uniform2f(u.uResolution, width, height);
+    gl.uniform1f(u.uCamY, view.camY);
+    gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
+    gl.uniform1f(u.uFocal, view.focal);
+    gl.uniform1f(u.uSunVisible, view.sunVisible);
+    gl.uniform2fv(u.uSunShadow, view.sunShadow);
+    gl.uniform1f(u.uPreview, preview ? 1 : 0);
+    gl.uniform1f(u.uLodHeight, lodHeight);
+    gl.uniform2f(u.uJitter, jitter[0], jitter[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
+  }
+
+  /**
+   * Sonde le relief en quelques points, sans bloquer : les réponses sont relues de façon asynchrone (tampon de
+   * pixels, puis fence), une à deux images plus tard, et la promesse est résolue avec elles.
+   */
+  probe(requests: readonly ProbeRequest[]): Promise<ProbeResult[]> {
+    if (requests.length > MAX_PROBES) throw new Error(`Au plus ${MAX_PROBES} sondes par lot`);
+    const gl = this.gl;
+    const u = this.probeUniforms;
+    gl.useProgram(this.probeProgram);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeTarget.framebuffer);
+    gl.viewport(0, 0, PROBE_VALUES, requests.length);
+    gl.enable(gl.SCISSOR_TEST);
+    requests.forEach((request, row) => {
+      gl.scissor(0, row, PROBE_VALUES, 1);
+      this.setWorldUniforms(u, {
+        octaves: octaveOrigins(request.x, request.z),
+        fields: fieldOrigins(request.x, request.z),
+        rock: rockOrigins(request.x, request.z),
+      });
+      gl.uniform1f(u.uCamY, request.y);
+      gl.uniform1f(u.uRelative, request.relative ? 1 : 0);
+      gl.uniform2fv(u.uAhead, request.ahead ?? [0, 0]);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    });
+    gl.disable(gl.SCISSOR_TEST);
+
+    const size = PROBE_VALUES * requests.length * 4;
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, size, gl.STREAM_READ);
+    gl.readPixels(0, 0, PROBE_VALUES, requests.length, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)!;
+    gl.flush();
+
+    return new Promise((resolve) => {
+      const poll = () => {
+        if (gl.getSyncParameter(fence, gl.SYNC_STATUS) !== gl.SIGNALED) {
+          setTimeout(poll, 2);
+          return;
+        }
+        gl.deleteSync(fence);
+        const bytes = new Uint8Array(size);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bytes);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.deleteBuffer(buffer);
+        // Les quatre octets d'un pixel sont ceux du flottant, poids faible en premier, comme dans un Float32Array
+        const values = new Float32Array(bytes.buffer);
+        resolve(requests.map((_, row) => {
+          const v = values.subarray(row * PROBE_VALUES, (row + 1) * PROBE_VALUES);
+          return {
+            ground: v[0],
+            climate: [v[1], v[2], v[3]],
+            groundAhead: v[4],
+            sunVisible: v[5],
+            sunShadow: [v[6], v[7]],
+          };
+        }));
+      };
+      setTimeout(poll, 0);
+    });
   }
 
   /**
@@ -222,17 +319,15 @@ export class Renderer {
     return pixels;
   }
 
-  private setTerrainUniforms(view: View, width: number, height: number) {
-    const gl = this.gl;
-    const u = this.uniforms;
+  private uniformLocations(program: WebGLProgram): TerrainUniforms {
+    return Object.fromEntries(
+      TERRAIN_UNIFORMS.map((name) => [name, this.gl.getUniformLocation(program, name)]),
+    ) as TerrainUniforms;
+  }
 
-    // Caméra
-    gl.uniform2f(u.uResolution, width, height);
-    gl.uniform1f(u.uCamY, view.camY);
-    gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
-    gl.uniform1f(u.uFocal, view.focal);
-    gl.uniform1f(u.uSunVisible, view.sunVisible);
-    gl.uniform2fv(u.uSunShadow, view.sunShadow);
+  /** Réglages et origines des bruits, communs au terrain et aux sondes (un uniform absent est ignoré). */
+  private setWorldUniforms(u: TerrainUniforms, origins: Origins) {
+    const gl = this.gl;
 
     // Réglages
     gl.uniform3fv(u.uSunDir, sunDirection());
@@ -250,14 +345,14 @@ export class Renderer {
     gl.uniform3fv(u.uBiomes, biomes().flatMap((b) => [b.base, b.amplitude, b.gain]));
     gl.uniform1f(u.uMaxH, maxTerrainHeight());
 
-    // Origines des bruits à la position de la caméra
-    gl.uniform2fv(u.uOctFrac, view.octaves.frac);
-    gl.uniform2uiv(u.uOctCell, view.octaves.cell);
-    gl.uniform2fv(u.uFieldFrac, view.fields.frac);
-    gl.uniform2uiv(u.uFieldCell, view.fields.cell);
-    gl.uniform3fv(u.uRockFrac, view.rock.frac);
-    gl.uniform3uiv(u.uRockCell, view.rock.cell);
-    gl.uniformMatrix3fv(u.uRockRot, false, view.rock.rotation);
+    // Origines des bruits à la position de la caméra ou de la sonde
+    gl.uniform2fv(u.uOctFrac, origins.octaves.frac);
+    gl.uniform2uiv(u.uOctCell, origins.octaves.cell);
+    gl.uniform2fv(u.uFieldFrac, origins.fields.frac);
+    gl.uniform2uiv(u.uFieldCell, origins.fields.cell);
+    gl.uniform3fv(u.uRockFrac, origins.rock.frac);
+    gl.uniform3uiv(u.uRockCell, origins.rock.cell);
+    gl.uniformMatrix3fv(u.uRockRot, false, origins.rock.rotation);
     gl.uniform2uiv(u.uDuneScale, duneScales());
   }
 

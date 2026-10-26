@@ -1,5 +1,4 @@
 import type { FlyCamera } from './camera';
-import { climate } from './terrain/climate';
 import { viewHash } from './viewUrl';
 
 /** Nom du biome d'après le niveau de relief (voir BIOME_STOPS) et le poids du désert. */
@@ -15,9 +14,9 @@ function biomeName(level: number, desert: number): string {
 
 /** Première ligne : biome, altitude, vitesse et état du rendu ; seconde ligne : la vue au format de l'URL. */
 export function updateHud(element: HTMLElement, camera: FlyCamera, status: string) {
-  const [level, desert] = climate(camera.x, camera.z);
+  const climate = camera.climate();
   element.textContent = [
-    biomeName(level, desert),
+    climate ? biomeName(climate[0], climate[1]) : '…',
     `Altitude ${Math.round(camera.y)} m`,
     `${Math.round(camera.speed())} m/s`,
     status,

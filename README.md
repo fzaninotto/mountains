@@ -7,7 +7,7 @@ pixel à l'écran.
 ```bash
 npm install
 npm run dev        # serveur de développement
-npm test           # tests de non-régression du relief
+npm test           # tests unitaires (origines des bruits, URL, constantes)
 npm run typecheck
 npm run build
 ```
@@ -16,6 +16,9 @@ Commandes : glisser pour regarder, ZQSD / WASD pour avancer, R / Espace et F pou
 accélérer, molette pour la vitesse. La vue courante s'écrit dans l'URL (`#x=…&z=…&alt=…&yaw=…&pitch=…&seed=…`) et
 dans le HUD : une capture d'écran suffit pour retrouver un point de vue.
 
+Modes de développement : `#bench` mesure les performances et compare l'image à une référence, `#capture` rend les
+vues de `captures/views.json`, `#probe-test` compare les sondes GPU à des altitudes de référence.
+
 ## Organisation
 
 ```
@@ -23,34 +26,40 @@ src/
 ├── main.ts          Assemblage : canvas, caméra, panneau, boucle d'animation
 ├── params.ts        Réglages modifiables depuis le panneau
 ├── gui.ts           Panneau de réglages (lil-gui)
-├── camera.ts        Caméra de vol libre et vue transmise au shader
+├── camera.ts        Caméra de vol libre, sondes du sol et du soleil, vue transmise au shader
 ├── scheduler.ts     Ordonnancement des images : aperçu adaptatif, image nette par bandes, export
 ├── hud.ts           Texte du HUD
 ├── viewUrl.ts       Vue ↔ URL, point de départ par défaut
-├── terrain/         Relief côté CPU (double précision)
-│   ├── constants.ts Constantes partagées avec le shader (source unique, injectées dans le GLSL)
-│   ├── noise.ts     Hash et value noise, identiques bit à bit au GPU
-│   ├── biomes.ts    Table des biomes et interpolation
-│   ├── climate.ts   Répartition des biomes, falaises
-│   ├── dunes.ts     Dunes
-│   ├── height.ts    Altitude du sol (collisions de la caméra)
-│   ├── origins.ts   Origines des bruits à la position de la caméra (précision à grande distance)
-│   └── height.test.ts
+├── bench.ts, capture.ts, probeTest.ts   Modes #bench, #capture et #probe-test
+├── terrain/         Données du relief côté CPU (le relief lui-même n'existe qu'en GLSL)
+│   ├── constants.ts Constantes du relief (source unique, injectées dans le GLSL)
+│   ├── biomes.ts    Table des biomes et réglages dérivés, transmis au shader
+│   └── origins.ts   Origines des bruits en double précision (précision à grande distance)
 └── render/          Rendu WebGL2
-    ├── renderer.ts  Programmes, cibles, envoi des uniformes ; assemble le shader de terrain
-    ├── uniforms.glsl, noise.glsl, climate.glsl, rock.glsl, height.glsl, raymarch.glsl, atmosphere.glsl,
-    │   shading.glsl
+    ├── renderer.ts  Programmes, cibles, envoi des uniformes, sondes ; assemble les shaders
+    ├── uniforms.glsl, noise.glsl, climate.glsl, rock.glsl, height.glsl   Relief
+    ├── raymarch.glsl, atmosphere.glsl, shading.glsl
     ├── terrain.frag.glsl  main() du shader de terrain
+    ├── probe.frag.glsl    main() des sondes
     └── fullscreen.vert.glsl, blit.frag.glsl
 ```
 
 ## Principes
 
-**Le relief existe deux fois.** Le shader (`render/height.glsl`) le calcule pour l'image ; `terrain/height.ts` le
-recalcule en double précision pour les collisions de la caméra et le HUD. Les deux doivent rester identiques :
-toute modification de l'algorithme se fait des deux côtés. Les constantes, elles, n'existent qu'une fois, dans
-`terrain/constants.ts`, que le renderer injecte en tête du shader. `npm test` vérifie que des altitudes de
-référence ne changent pas.
+**Le relief n'existe qu'en GLSL.** Le CPU en a pourtant besoin : altitude du sol pour placer la caméra et
+l'empêcher de traverser le relief, biome et hauteur au-dessus du sol pour le HUD et l'URL, soleil caché ou non par
+le relief pour l'éblouissement (`uSunVisible`, `uSunShadow`). Il les demande au GPU par des **sondes** : un petit
+programme, assemblé des mêmes modules que le terrain avec un autre `main()` (`render/probe.frag.glsl`), calcule
+ces valeurs pour un point et les écrit bit à bit dans une petite cible RGBA8, sans extension ni perte. Elles sont
+relues sans bloquer (`readPixels` vers un tampon, `fenceSync`, puis `getBufferSubData` une fois la fence passée),
+une à deux images plus tard.
+
+La caméra garde la dernière réponse, associée à la position et aux réglages sondés. Elle ne se place qu'une fois
+la réponse reçue (chargement, URL, téléportation, #bench, #capture) : rien n'est dessiné avant. En vol, la
+collision se sert de la réponse précédente ; la sonde relève aussi le sol le plus haut sur le trajet prévu
+jusqu'à la réponse suivante, ce qui sert de marge. L'image nette attend la sonde de la position finale. Les
+constantes n'existent qu'une fois, dans `terrain/constants.ts`, que le renderer injecte en tête des shaders.
+`#probe-test` vérifie que des altitudes de référence ne changent pas.
 
 **Précision à grande distance.** Le GPU travaille en float32 et en coordonnées relatives à la caméra. Pour chaque
 octave de chaque bruit, `terrain/origins.ts` calcule en double précision la cellule (entier) et la partie

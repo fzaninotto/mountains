@@ -1,5 +1,6 @@
 // ---------- Relief ----------
-// terrainHeight() est identique à src/terrain/height.ts ; surfaceDistance() y ajoute le détail 3D des parois.
+// terrainHeight() donne l'altitude du sol, que les sondes relisent pour le CPU (probe.frag.glsl) ;
+// surfaceDistance() y ajoute le détail 3D des parois.
 
 float steepness(float slope) {
   return smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], slope);

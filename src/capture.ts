@@ -54,6 +54,7 @@ export async function runCapture(renderer: Renderer, camera: FlyCamera, output: 
     camera.yaw = view.yaw;
     camera.pitch = view.pitch;
     camera.placeAboveGround(view.alt);
+    await camera.settle();
     const cameraView = camera.view();
     for (let k = 0; k < SMOOTHING_PASSES; k++) {
       const destination = k === 0 ? target : pass;

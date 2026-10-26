@@ -1,6 +1,4 @@
 import { params } from '../params';
-import { BIOME_STOPS } from './constants';
-import { smoothstep } from './noise';
 
 /** Un biome règle le relief : altitude de base (m), amplitude du fBm (m) et rugosité (gain entre octaves). */
 export interface Biome {
@@ -13,7 +11,10 @@ const PLAIN: Biome = { base: 0, amplitude: 120, gain: 0.42 };
 const HILLS: Biome = { base: 150, amplitude: 380, gain: 0.4 };
 const MIDDLE_MOUNTAINS: Biome = { base: 450, amplitude: 950, gain: 0.47 };
 
-/** Biomes dans l'ordre de BIOME_STOPS. La mer et la plage suivent le niveau de l'eau, la haute montagne les réglages. */
+/**
+ * Biomes dans l'ordre de BIOME_STOPS, interpolés par biomeAt() dans le shader. La mer et la plage suivent le niveau de
+ * l'eau, la haute montagne les réglages.
+ */
 export function biomes(): Biome[] {
   return [
     { base: params.water - 150, amplitude: 120, gain: 0.45 },
@@ -23,19 +24,6 @@ export function biomes(): Biome[] {
     MIDDLE_MOUNTAINS,
     { base: 1200, amplitude: params.height, gain: params.gain },
   ];
-}
-
-/** Biome interpolé en continu le long du niveau de relief : aucune frontière entre deux biomes. */
-export function biomeAt(level: number): Biome {
-  const list = biomes();
-  const result = { ...list[0] };
-  for (let i = 0; i < list.length - 1; i++) {
-    const t = smoothstep(BIOME_STOPS[i], BIOME_STOPS[i + 1], level);
-    result.base += (list[i + 1].base - result.base) * t;
-    result.amplitude += (list[i + 1].amplitude - result.amplitude) * t;
-    result.gain += (list[i + 1].gain - result.gain) * t;
-  }
-  return result;
 }
 
 /** Décalage du champ des chaînes de montagnes selon la part de montagne voulue. */

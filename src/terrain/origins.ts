@@ -1,6 +1,7 @@
 import { params } from '../params';
-import { FIELD_OCTAVES, FIELDS, MAX_OCTAVES, ROCK_WAVELENGTHS } from './constants';
-import { mod32, rotate, seedOffset } from './noise';
+import {
+  DUNE_CREST_WAVELENGTH, DUNE_LAYERS, DUNE_WARP_WAVELENGTH, FIELD_OCTAVES, FIELDS, MAX_OCTAVES, ROCK_WAVELENGTHS,
+} from './constants';
 
 // Précision à grande distance. Le shader travaille en float32, en coordonnées relatives à la caméra. Pour chaque
 // octave de chaque bruit, on lui passe ici, calculées en double précision, la cellule (partie entière, uint32) et
@@ -15,6 +16,28 @@ export interface NoiseOrigin {
 export interface RockOrigin extends NoiseOrigin {
   /** Matrices de rotation 3×3 (en colonnes) de chaque octave. */
   rotation: Float32Array;
+}
+
+/** Origines de tous les bruits du relief en un point. */
+export interface Origins {
+  octaves: NoiseOrigin;
+  fields: NoiseOrigin;
+  rock: RockOrigin;
+}
+
+const TWO_32 = 4294967296;
+
+/** Réduit un entier (éventuellement très grand ou négatif) modulo 2^32, comme les cellules uint du shader. */
+export const mod32 = (v: number) => v - Math.floor(v / TWO_32) * TWO_32;
+
+/** Décalage des cellules propre à la graine : changer de graine revient à se déplacer très loin dans le bruit. */
+export function seedOffset(): [number, number] {
+  return [Math.imul(params.seed, 0x9e3779b1) >>> 0, Math.imul(params.seed ^ 0x5bd1e995, 0x85ebca6b) >>> 0];
+}
+
+/** Passage à l'octave suivante, comme 2.0 * (M2 * q) dans le shader : rotation et fréquence doublée. */
+export function rotate(x: number, y: number): [number, number] {
+  return [2 * (0.8 * x + 0.6 * y), 2 * (-0.6 * x + 0.8 * y)];
 }
 
 function setOrigin(frac: Float32Array, cell: Uint32Array, i: number, qx: number, qz: number, ox: number, oy: number) {
@@ -79,4 +102,21 @@ export function rockOrigins(x: number, z: number): RockOrigin {
     }
   });
   return { frac, cell, rotation: new Float32Array(ROCK_ROTATIONS.flat()) };
+}
+
+/**
+ * Facteurs d'échelle entiers (x, z) des dunes : ondulation, hauteur des crêtes, puis une paire par couche. Les
+ * fréquences des dunes sont des multiples entiers de celle des biomes : le shader réutilise ainsi l'origine en
+ * double précision du premier champ de biomes, au lieu d'en recevoir une par bruit.
+ */
+export function duneScales(): Uint32Array {
+  const factors = (wavelength: number, stretch: number) => {
+    const kx = Math.max(1, Math.round(params.biomeScale / wavelength));
+    return [kx, Math.max(1, Math.round(kx / stretch))];
+  };
+  return new Uint32Array([
+    ...factors(DUNE_WARP_WAVELENGTH, 1),
+    ...factors(DUNE_CREST_WAVELENGTH, 1),
+    ...DUNE_LAYERS.flatMap((layer) => factors(layer.wavelength, layer.stretch)),
+  ]);
 }

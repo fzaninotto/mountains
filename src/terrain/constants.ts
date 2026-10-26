@@ -1,5 +1,5 @@
-// Constantes du relief partagées entre la copie CPU (src/terrain) et le shader (src/render).
-// Le renderer les injecte en tête du shader via glslConstants() : c'est l'unique source de vérité.
+// Constantes du relief. Le renderer les injecte en tête des shaders via glslConstants() ; le CPU s'en sert pour les
+// origines des bruits (origins.ts) et les réglages transmis au shader.
 
 /** Nombre maximal d'octaves du relief (de la taille des continents au centimètre). */
 export const MAX_OCTAVES = 20;

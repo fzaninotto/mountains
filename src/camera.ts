@@ -1,19 +1,14 @@
-import { params, sunDirection } from './params';
-import { maxTerrainHeight } from './terrain/biomes';
-import { terrainHeight } from './terrain/height';
-import { smoothstep } from './terrain/noise';
-import { fieldOrigins, octaveOrigins, rockOrigins, type NoiseOrigin, type RockOrigin } from './terrain/origins';
+import { params } from './params';
+import { fieldOrigins, octaveOrigins, rockOrigins, type Origins } from './terrain/origins';
+import type { ProbeResult, Renderer } from './render/renderer';
 
 /** Tout ce dont le shader a besoin pour dessiner la vue courante. */
-export interface View {
+export interface View extends Origins {
   camY: number;
   /** Repère de la caméra (droite, haut, avant), en colonnes. */
   rotation: Float32Array;
   /** Distance focale pour un écran de hauteur 2 (1 / tan(fov / 2)). */
   focal: number;
-  octaves: NoiseOrigin;
-  fields: NoiseOrigin;
-  rock: RockOrigin;
   /** Part visible du soleil depuis la caméra (0 à 1), qui règle l'éblouissement. */
   sunVisible: number;
   /**
@@ -23,16 +18,24 @@ export interface View {
   sunShadow: [number, number];
 }
 
+/** Réponse d'une sonde, avec la position sondée et l'état (voir FlyCamera.key) au moment de la demande. */
+interface Probed {
+  key: string;
+  x: number;
+  z: number;
+  result: ProbeResult;
+}
+
 /** Hauteur minimale au-dessus du sol (m). */
 const CLEARANCE = 2;
 const MAX_PITCH = 1.45;
 export const MIN_SPEED = 2;
 export const MAX_SPEED = 20000;
-/** Recherche du relief entre la caméra et le soleil : nombre de pas et distance du dernier (m). */
-const SUN_STEPS = 10;
-const SUN_RANGE = 50_000;
-/** Rayon apparent du soleil (rad) : le relief le masque progressivement sur cette marge. */
-const SUN_RADIUS = 0.01;
+/** Réglages dont dépend la réponse d'une sonde (relief, eau, neige, soleil). */
+const PROBED_PARAMS = [
+  'seed', 'scale', 'height', 'gain', 'biomeScale', 'mountainCoverage', 'desertCoverage', 'water', 'snow',
+  'sunElevation', 'sunAzimuth',
+] as const;
 
 /**
  * Caméra de vol libre : glisser pour regarder, ZQSD / WASD et flèches pour avancer, R / Espace et F pour monter
@@ -46,8 +49,18 @@ export class FlyCamera {
   pitch = -0.08;
   private readonly keys = new Set<string>();
   private looked = false;
+  /** Hauteur voulue au-dessus du sol (placeAboveGround), en attendant que la sonde donne l'altitude du sol. */
+  private pendingAltitude: number | null = null;
+  /** Dernière réponse des sondes appliquée, et la suivante, arrivée entre deux images. */
+  private probed: Probed | null = null;
+  private arrived: Probed | null = null;
+  private probing = false;
+  /** Délai de réponse des sondes (s), moyenné. */
+  private latency = 0.05;
+  /** Déplacement horizontal (m/s) lors de la dernière image. */
+  private velocity: [number, number] = [0, 0];
 
-  constructor(element: HTMLElement) {
+  constructor(element: HTMLElement, private readonly renderer: Renderer) {
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       this.keys.add(e.code);
@@ -69,17 +82,50 @@ export class FlyCamera {
     }, { passive: false });
   }
 
-  /** Altitude du sol, ou de l'eau, sous la caméra. */
-  ground(): number {
-    return Math.max(terrainHeight(this.x, this.z), params.water);
-  }
-
+  /** Place la caméra à cette hauteur au-dessus du sol (ou de l'eau) dès que la sonde aura répondu, voir ready(). */
   placeAboveGround(altitude: number) {
-    this.y = this.ground() + altitude;
+    this.pendingAltitude = altitude;
   }
 
-  clampToGround() {
-    this.y = Math.max(this.y, this.ground() + CLEARANCE);
+  /** La caméra est placée : on peut dessiner. */
+  ready(): boolean {
+    return this.pendingAltitude === null && this.probed !== null;
+  }
+
+  /** La dernière sonde répond pour la position et les réglages actuels : la vue est exacte (soleil compris). */
+  settled(): boolean {
+    return this.ready() && this.probed!.key === this.key();
+  }
+
+  /** Attend que la vue soit exacte, sans boucle d'animation (banc de mesure, captures). */
+  async settle() {
+    while (!this.settled()) {
+      this.sync();
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+  }
+
+  /** Hauteur (m) au-dessus du sol ou de l'eau, d'après la dernière sonde. */
+  altitude(): number {
+    if (this.pendingAltitude !== null) return this.pendingAltitude;
+    return this.probed ? this.y - Math.max(this.probed.result.ground, params.water) : 0;
+  }
+
+  /** Niveau de relief, poids du désert et poids des falaises sous la caméra, null avant la première sonde. */
+  climate(): [number, number, number] | null {
+    return this.probed?.result.climate ?? null;
+  }
+
+  /**
+   * Applique la sonde arrivée depuis l'image précédente et en lance une nouvelle si l'état a changé depuis la
+   * dernière. À appeler à chaque image ; renvoie true si la caméra a bougé (placement ou sol).
+   */
+  sync(): boolean {
+    const arrived = this.arrived;
+    this.arrived = null;
+    const moved = arrived ? this.apply(arrived) : false;
+    if (!this.probing && this.probed?.key !== this.key()) this.probe();
+    return moved;
   }
 
   /** Vitesse courante (m/s), Maj comprise. */
@@ -98,14 +144,16 @@ export class FlyCamera {
 
     const looked = this.looked;
     this.looked = false;
+    this.velocity = [0, 0];
     if (!forward && !strafe && !lift) return looked;
 
     const [fx, fy, fz] = this.forward();
     const [rx, , rz] = right(fx, fz);
-    const step = this.speed() * dt;
-    this.x += (fx * forward + rx * strafe) * step;
-    this.y += (fy * forward + lift) * step;
-    this.z += (fz * forward + rz * strafe) * step;
+    const speed = this.speed();
+    this.velocity = [(fx * forward + rx * strafe) * speed, (fz * forward + rz * strafe) * speed];
+    this.x += this.velocity[0] * dt;
+    this.y += (fy * forward + lift) * speed * dt;
+    this.z += this.velocity[1] * dt;
     this.clampToGround();
     return true;
   }
@@ -121,31 +169,64 @@ export class FlyCamera {
       octaves: octaveOrigins(this.x, this.z),
       fields: fieldOrigins(this.x, this.z),
       rock: rockOrigins(this.x, this.z),
-      ...this.sunOcclusion(),
+      sunVisible: this.probed?.result.sunVisible ?? 1,
+      sunShadow: this.probed?.result.sunShadow ?? [0, 0],
     };
   }
 
+  /** État dont dépend la réponse d'une sonde : position, placement en attente et réglages. */
+  private key(): string {
+    return [this.x, this.y, this.z, this.pendingAltitude, ...PROBED_PARAMS.map((name) => params[name])].join();
+  }
+
   /**
-   * Relief entre la caméra et le soleil : il est sondé vers le soleil par pas croissants, le premier à la hauteur
-   * de la caméra au-dessus du sol, le dernier à SUN_RANGE.
+   * Sonde le GPU à la position actuelle. Le trajet prévu d'ici la réponse suivante (deux délais de réponse) est
+   * sondé aussi : la collision reste sûre pendant que la réponse voyage.
    */
-  private sunOcclusion(): Pick<View, 'sunVisible' | 'sunShadow'> {
-    const [sx, sy, sz] = sunDirection();
-    let visible = 1;
-    let shadowDistance = 0;
-    let shadowDepth = 0;
-    const first = Math.max(5, this.y - this.ground());
-    const growth = Math.max(1.2, (SUN_RANGE / first) ** (1 / (SUN_STEPS - 1)));
-    const ceiling = maxTerrainHeight();
-    for (let i = 0, d = first; i < SUN_STEPS; i++, d *= growth) {
-      const y = this.y + sy * d;
-      if (y > ceiling) break;
-      const ground = Math.max(terrainHeight(this.x + sx * d, this.z + sz * d), params.water);
-      visible = Math.min(visible, smoothstep(-SUN_RADIUS, SUN_RADIUS, (y - ground) / d));
-      if (ground - y > shadowDepth) [shadowDistance, shadowDepth] = [d, ground - y];
+  private probe() {
+    const key = this.key();
+    const { x, z, pendingAltitude } = this;
+    const lead = Math.max(0.05, 2 * this.latency);
+    const sent = performance.now();
+    this.probing = true;
+    this.renderer.probe([{
+      x,
+      z,
+      y: pendingAltitude ?? this.y,
+      relative: pendingAltitude !== null,
+      ahead: [this.velocity[0] * lead, this.velocity[1] * lead],
+    }]).then(([result]) => {
+      this.probing = false;
+      this.latency += 0.2 * ((performance.now() - sent) / 1000 - this.latency);
+      this.arrived = { key, x, z, result };
+    });
+  }
+
+  private apply(probed: Probed): boolean {
+    const y = this.y;
+    if (this.pendingAltitude !== null) {
+      // La caméra a été déplacée ou un réglage a changé entre-temps : la sonde suivante la placera
+      if (probed.key !== this.key()) return false;
+      this.y = Math.max(probed.result.ground, params.water) + this.pendingAltitude;
+      this.pendingAltitude = null;
+      // La sonde a calculé le soleil à cette hauteur-là : elle vaut pour la nouvelle position
+      this.probed = { ...probed, key: this.key() };
+      return true;
     }
-    // Le soleil couché n'éblouit plus
-    return { sunVisible: visible * smoothstep(-0.02, 0.05, sy), sunShadow: [shadowDistance, shadowDepth] };
+    this.probed = probed;
+    this.clampToGround();
+    return this.y !== y;
+  }
+
+  /**
+   * Garde la caméra au-dessus du sol connu. Au point sondé, c'est l'altitude du sol ; ailleurs, la caméra a avancé
+   * depuis la demande : c'est le sol le plus haut de son trajet prévu.
+   */
+  private clampToGround() {
+    if (this.pendingAltitude !== null || !this.probed) return;
+    const { x, z, result } = this.probed;
+    const ground = x === this.x && z === this.z ? result.ground : result.groundAhead;
+    this.y = Math.max(this.y, Math.max(ground, params.water) + CLEARANCE);
   }
 
   private forward(): [number, number, number] {

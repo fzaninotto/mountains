@@ -8,7 +8,7 @@ uniform mat3 uCamRot;
 uniform float uFocal;
 // Décalage sous-pixel (px) des passes de lissage
 uniform vec2 uJitter;
-// Part visible du soleil depuis la caméra (relief, hauteur du soleil), voir src/camera.ts
+// Part visible du soleil depuis la caméra (relief, hauteur du soleil), relue des sondes (probe.frag.glsl)
 uniform float uSunVisible;
 // Relief qui cache le soleil : distance (m) et profondeur (m) du rayon vers le soleil sous son sommet, 0 sans relief
 uniform vec2 uSunShadow;
@@ -44,7 +44,7 @@ uniform uvec2 uFieldCell[FIELD_COUNT * FIELD_OCTAVES];
 uniform vec3 uRockFrac[ROCK_OCTAVES];
 uniform uvec3 uRockCell[ROCK_OCTAVES];
 uniform mat3 uRockRot[ROCK_OCTAVES];
-// Facteurs d'échelle entiers des dunes (voir src/terrain/dunes.ts)
+// Facteurs d'échelle entiers des dunes (voir duneScales() dans src/terrain/origins.ts)
 uniform uvec2 uDuneScale[DUNE_SCALE_COUNT];
 
 out vec4 outColor;

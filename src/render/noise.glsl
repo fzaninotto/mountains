@@ -2,7 +2,7 @@
 // Les cellules sont des uint décalés par l'origine de la caméra (voir src/terrain/origins.ts) : x est la position
 // fractionnaire dans l'espace du bruit, cell la cellule entière qui s'y ajoute.
 
-// Hash entier « Integer Hash III » d'Inigo Quilez, dans [0, 1] (identique à src/terrain/noise.ts)
+// Hash entier « Integer Hash III » d'Inigo Quilez, dans [0, 1]
 float hash(uvec2 x) {
   uvec2 q = 1103515245u * ((x >> 1u) ^ x.yx);
   uint n = 1103515245u * (q.x ^ (q.y >> 3u));
@@ -13,7 +13,7 @@ float hash3(uvec3 i) {
   return hash(uvec2(i.x ^ (i.y * 2654435761u), i.z));
 }
 
-// Value noise 2D avec dérivées analytiques : (valeur dans [-1, 1], d/dx, d/dy) (identique à src/terrain/noise.ts)
+// Value noise 2D avec dérivées analytiques : (valeur dans [-1, 1], d/dx, d/dy)
 vec3 noised(vec2 x, uvec2 cell) {
   vec2 fl = floor(x);
   vec2 f = x - fl;
