@@ -73,7 +73,7 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
 
 // Niveau de détail : nombre d'octaves dont la longueur d'onde dépasse deux pixels à la distance t
 float lod(float t) {
-  float footprint = max(t, 0.01) * pixelAngle * uDetail;
+  float footprint = max(t, 0.01) * lodPixelAngle * uDetail;
   return clamp(log2(uScale / (2.0 * footprint)), 1.0, float(MAX_OCTAVES));
 }
 
@@ -89,5 +89,5 @@ float surfaceDistance(vec3 p, float t) {
   float e = mix(dy, dy / sqrt(1.0 + dot(slope, slope)), wall);
   if (e >= ROCK_CARVE_MAX) return e;
   // Empreinte doublée : les parois sont souvent vues de biais, où un pixel couvre bien plus de roche
-  return (e + wall * rockCarve(p, 2.0 * t * pixelAngle * uDetail)) / (1.0 + ROCK_CARVE_LIPSCHITZ * wall);
+  return (e + wall * rockCarve(p, 2.0 * t * lodPixelAngle * uDetail)) / (1.0 + ROCK_CARVE_LIPSCHITZ * wall);
 }

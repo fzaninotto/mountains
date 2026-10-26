@@ -144,7 +144,10 @@ export class FrameScheduler {
     this.movingScale = Math.min(this.movingScale, params.movingScale);
     const width = Math.max(1, Math.min(this.preview.width, Math.round(canvas.width * this.movingScale)));
     const height = Math.max(1, Math.min(this.preview.height, Math.round(canvas.height * this.movingScale)));
-    renderer.renderRows(this.preview, this.camera.view(), 0, height, width, height, true);
+    // Niveau de détail fixé sur la résolution maximale de l'aperçu, et non sur sa résolution du moment : sinon le
+    // relief (rivages, reflets…) changerait de forme à chaque ajustement de la résolution
+    const lodHeight = canvas.height * params.movingScale;
+    renderer.renderRows(this.preview, this.camera.view(), 0, height, width, height, true, lodHeight);
     this.show({ target: this.preview, width, height, scale: this.movingScale });
     this.dirty = false;
     this.recordPreview(now);
@@ -192,7 +195,9 @@ export class FrameScheduler {
     this.jobSubmitted = true;
     const rows = Math.max(1, Math.floor(this.pixelBudget / job.width));
     const end = Math.min(job.height, job.row + rows);
-    this.renderer.renderRows(job.target, job.view, job.row, end, job.width, job.height);
+    // Les niveaux d'affinage gardent le niveau de détail de l'image finale : seule la finesse de l'échantillonnage change
+    const lodHeight = job.target === this.exportTarget ? job.target.height : this.canvas.height;
+    this.renderer.renderRows(job.target, job.view, job.row, end, job.width, job.height, false, lodHeight);
     job.row = end;
     return end >= job.height;
   }

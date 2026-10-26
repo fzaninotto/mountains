@@ -41,7 +41,7 @@ vec3 terrainAlbedo(vec3 p, vec3 n, float t) {
   float desert = c.y;
 
   // Roche : grise en climat tempéré, ocre en climat aride, tachée à plusieurs échelles
-  float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, t * pixelAngle), 0.0, 1.0);
+  float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, t * lodPixelAngle), 0.0, 1.0);
   vec3 col = mix(
     mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), tone),
     mix(vec3(0.24, 0.13, 0.07), vec3(0.4, 0.24, 0.13), tone),

@@ -4,6 +4,7 @@
 
 void main() {
   pixelAngle = 2.0 / (uResolution.y * uFocal);
+  lodPixelAngle = 2.0 / (uLodHeight * uFocal);
 
   // Couleurs du soleil et du ciel selon la hauteur du soleil
   float sh = uSunDir.y;

@@ -22,6 +22,8 @@ uniform float uFog;
 uniform float uExposure;
 // 1 pendant les déplacements : aperçu allégé (ombres et reflets réduits, relief inchangé)
 uniform float uPreview;
+// Hauteur d'image (px) qui fixe le niveau de détail du relief, indépendante de la résolution de calcul
+uniform float uLodHeight;
 
 // Biomes le long du niveau de relief : (altitude de base, amplitude, gain)
 uniform vec3 uBiomes[BIOME_COUNT];
@@ -47,7 +49,9 @@ const mat2 M2 = mat2(0.8, -0.6, 0.6, 0.8);
 const float TMAX = 80000.0;
 
 // Valeurs calculées une fois par pixel dans main()
+// Angle d'un pixel calculé (précision du raymarching, normales) et d'un pixel de référence (niveau de détail)
 float pixelAngle;
+float lodPixelAngle;
 vec3 sunCol;
 vec3 skyCol;
 vec3 horizonCol;
