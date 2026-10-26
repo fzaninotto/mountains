@@ -156,7 +156,7 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
     * smoothstep(0.05, 0.3, length(slopeDir));
   float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
-  float hold = mix(s.normal.y, s.coarse.y, 0.5) - 0.05 * s.cavity + (p.y - snowLine) * 0.0002;
+  float hold = mix(s.normal.y, s.coarse.y, 0.85) - 0.05 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1);
   float snow = smoothstep(snowLine - 150.0, snowLine + 150.0, p.y + variation * 300.0) * smoothstep(0.5, 0.7, hold);
   return mix(col, vec3(0.85, 0.88, 0.92), snow);
 }
