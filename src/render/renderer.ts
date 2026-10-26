@@ -127,6 +127,25 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  /**
+   * Attend la fin du rendu dans `target` (mesures de performance). gl.finish() n'attend pas réellement dans les
+   * navigateurs : lire un pixel, si.
+   */
+  finish(target: Target) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+  }
+
+  /** Lit les pixels RGBA d'une cible (comparaison d'images). */
+  readPixels(target: Target): Uint8Array {
+    const gl = this.gl;
+    const pixels = new Uint8Array(target.width * target.height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.readPixels(0, 0, target.width, target.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    return pixels;
+  }
+
   private setTerrainUniforms(view: View, width: number, height: number) {
     const gl = this.gl;
     const u = this.uniforms;

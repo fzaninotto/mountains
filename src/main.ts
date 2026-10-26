@@ -6,6 +6,7 @@ import { FrameScheduler } from './scheduler';
 import { createGui } from './gui';
 import { updateHud } from './hud';
 import { applyStartView, viewHash } from './viewUrl';
+import { runBenchmark } from './bench';
 
 /** Rayon (m) dans lequel « Aller ailleurs » choisit une position. */
 const TELEPORT_RANGE = 500_000;
@@ -42,6 +43,14 @@ const gui = createGui({
   exportImage: () => scheduler.requestExport(),
 });
 
+// #bench lance le banc de mesure à la place de la boucle d'animation (#bench&save enregistre la référence)
+const benchmark = new URLSearchParams(window.location.hash.slice(1));
+if (benchmark.has('bench')) {
+  runBenchmark(renderer, camera, hud, benchmark.has('save'));
+} else {
+  requestAnimationFrame(frame);
+}
+
 let last = performance.now();
 function frame(now: number) {
   // Pas de temps réel : le déplacement ne dépend pas de la cadence (plafonné pour les retours d'arrière-plan)
@@ -52,5 +61,3 @@ function frame(now: number) {
   updateHud(hud, camera, scheduler.status());
   requestAnimationFrame(frame);
 }
-
-requestAnimationFrame(frame);
