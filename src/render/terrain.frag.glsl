@@ -42,20 +42,30 @@ void main() {
   vec3 rd = normalize(uCamRot * vec3(uv, uFocal));
   vec3 ro = vec3(0.0, uCamY, 0.0);
 
-  // Le terrain n'est cherché que jusqu'à la surface de l'eau
-  float tWater = rd.y < 0.0 ? (uWater - ro.y) / rd.y : -1.0;
-  float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0, 1.0, 700);
+  // Le terrain n'est cherché que jusqu'à la surface de l'eau, sphérique : au-delà de l'horizon marin, le rayon passe
+  float tWater = rayToLevel(ro, rd, uWater);
+  // Un rayon qui passe à moins d'un pixel au-dessus de l'horizon marin y touche l'eau : sinon il ramperait au ras du
+  // fond marin jusqu'à épuiser ses pas
+  if (tWater < 0.0) tWater = rayGrazesLevel(ro, rd, uWater);
+  // Juste au-dessus de l'horizon, le rayon longe longtemps la mer avant d'atteindre les terres lointaines : il lui
+  // faut plus de pas qu'ailleurs
+  float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0, 1.0, 1500);
   // Un fond marin peu profond peut être « touché » juste avant la surface, à la précision d'impact près (des dizaines
-  // de mètres au loin) : c'est de l'eau
-  if (t > 0.0 && tWater > 0.0 && terrain(ro.xz + rd.xz * t, lod(t)) < uWater) t = -1.0;
+  // de mètres au loin) : c'est de l'eau. Un rayon qui épuise ses pas au-dessus de la mer, au-delà de l'horizon, voit
+  // le ciel
+  if (t > 0.0 && terrain(ro.xz + rd.xz * t, lod(t)) < uWater) t = -1.0;
 
   // En aperçu, ombres moins précises ; le relief (march, calcNormal) reste celui de l'image nette
   int shadowSteps = uPreview > 0.5 ? 12 : SHADOW_STEPS;
   float shaded = shadowedLength(rd);
   vec3 col;
-  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, t, shadowSteps), ro, rd, t, shaded);
-  else if (tWater > 0.0) col = applyFog(shadeWater(ro + rd * tWater, rd, tWater), ro, rd, tWater, shaded);
-  else col = sky(rd, shaded);
+  if (t > 0.0) {
+    vec3 p = rayPoint(ro, rd, t);
+    col = applyFog(shadeTerrain(p, t, shadowSteps), ro, p, shaded);
+  } else if (tWater > 0.0) {
+    vec3 p = rayPoint(ro, rd, tWater);
+    col = applyFog(shadeWater(p, rayDir(rd, tWater), tWater), ro, p, shaded);
+  } else col = sky(rd, shaded);
 
   float mu = max(dot(rd, uSunDir), 0.0);
   col += sunCol * uSunVisible * (GLARE_WIDE * pow(mu, 8.0) + GLARE_NARROW * pow(mu, 400.0));

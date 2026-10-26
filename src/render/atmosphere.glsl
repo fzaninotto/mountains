@@ -32,6 +32,19 @@ float opticalLength(float y, float dy, float t, float scaleHeight) {
   return density * (abs(k) > 1e-7 ? (1.0 - exp(min(-t * k, 80.0))) / k : t);
 }
 
+// Même intégrale le long d'un rayon parti de l'altitude y jusqu'à l'infini, courbure comprise : le rayon s'élève de
+// a t² au-dessus de la sphère (voir rayPoint). Finie à l'horizon, elle se prolonge sous l'horizon géométrique, où le
+// rayon descend jusqu'à son point tangent avant de remonter. Loin de l'horizon, elle rejoint opticalLength()
+float skyOpticalLength(float y, vec3 rd, float scaleHeight) {
+  float a = CURVE * max(dot(rd.xz, rd.xz), 1e-6);
+  float x = 0.5 * rd.y * inversesqrt(a * scaleHeight);
+  // exp(x²) erfc(x), approché à 2 % près, et prolongé aux x négatifs par erfc(-x) = 2 - erfc(x)
+  float erfcx = 2.0 / (1.7724539 * (abs(x) + sqrt(x * x + 1.2732395)));
+  float density = exp(-y / scaleHeight);
+  float integral = x >= 0.0 ? density * erfcx : 2.0 * exp(min(x * x - y / scaleHeight, 80.0)) - density * erfcx;
+  return sqrt(3.14159265 * scaleHeight / (4.0 * a)) * integral;
+}
+
 // Part de l'épaisseur d'air au-dessus du point moyen de diffusion de Rayleigh (une hauteur d'échelle : exp(-1)) :
 // le ciel est éclairé par un soleil moins rougi que celui qui arrive au sol
 const float RAYLEIGH_SCATTER_AIR = 0.37;
@@ -63,12 +76,18 @@ vec3 sunColor(vec3 sunDir, float airScale, vec2 ozone) {
   return exp(-tau) * smoothstep(-0.05, 0.02, sunDir.y);
 }
 
+// Distance qui désigne un rayon sans fin (ciel) : l'air y est intégré jusqu'à l'infini, courbure comprise
+const float SKY_DISTANCE = 1e7;
+
 // Lumière diffusée vers l'œil le long du rayon (ro, rd) sur t mètres ; transmittance : part de la lumière du fond
 // qui traverse ce segment. sunLit : part de l'air du segment éclairée par le soleil direct (la diffusion multiple
 // n'en dépend pas)
 vec3 inScatter(vec3 ro, vec3 rd, float t, float sunLit, out vec3 transmittance) {
-  vec3 tauR = RAYLEIGH * opticalLength(ro.y, rd.y, t, RAYLEIGH_HEIGHT);
-  vec3 tauA = vec3(uFog * opticalLength(ro.y, rd.y, t, AEROSOL_HEIGHT));
+  vec2 air = t < SKY_DISTANCE
+    ? vec2(opticalLength(ro.y, rd.y, t, RAYLEIGH_HEIGHT), opticalLength(ro.y, rd.y, t, AEROSOL_HEIGHT))
+    : vec2(skyOpticalLength(ro.y, rd, RAYLEIGH_HEIGHT), skyOpticalLength(ro.y, rd, AEROSOL_HEIGHT));
+  vec3 tauR = RAYLEIGH * air.x;
+  vec3 tauA = vec3(uFog * air.y);
   transmittance = exp(-(tauR + tauA));
   float mu = dot(rd, uSunDir);
   float phaseR = 0.0596831 * (1.0 + mu * mu);
@@ -99,7 +118,7 @@ vec3 scatter(vec3 ro, vec3 rd, float t, float shaded, out vec3 transmittance) {
   shaded = min(shaded, t);
   vec3 nearTransmittance;
   vec3 near = inScatter(ro, rd, shaded, uSunVisible, nearTransmittance);
-  vec3 far = inScatter(ro + rd * shaded, rd, t - shaded, 1.0, transmittance);
+  vec3 far = inScatter(ro + rd * shaded, rd, t < SKY_DISTANCE ? t - shaded : t, 1.0, transmittance);
   transmittance *= nearTransmittance;
   return near + nearTransmittance * far;
 }
@@ -107,7 +126,7 @@ vec3 scatter(vec3 ro, vec3 rd, float t, float shaded, out vec3 transmittance) {
 // Lumière diffusée par l'atmosphère vue depuis la caméra, sans le disque solaire ; shaded : voir scatter()
 vec3 skyScatter(vec3 rd, float shaded) {
   vec3 transmittance;
-  return scatter(vec3(0.0, uCamY, 0.0), rd, 1e7, shaded, transmittance);
+  return scatter(vec3(0.0, uCamY, 0.0), rd, SKY_DISTANCE, shaded, transmittance);
 }
 
 // Ciel vu depuis la caméra, disque solaire compris ; shaded : voir scatter()
@@ -115,10 +134,12 @@ vec3 sky(vec3 rd, float shaded) {
   return skyScatter(rd, shaded) + sunCol * 40.0 * smoothstep(0.99985, 0.99995, dot(rd, uSunDir));
 }
 
-// Brume entre l'œil (ro) et un point à la distance t ; shaded : voir scatter()
-vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t, float shaded) {
+// Brume entre l'œil (ro) et le point p (voir rayPoint), le long de leur corde ; shaded : voir scatter()
+vec3 applyFog(vec3 col, vec3 ro, vec3 p, float shaded) {
+  vec3 chord = p - ro;
+  float len = length(chord);
   vec3 transmittance;
-  vec3 scattered = scatter(ro, rd, t, shaded, transmittance);
+  vec3 scattered = scatter(ro, chord / max(len, 1e-6), len, shaded, transmittance);
   return col * transmittance + scattered;
 }
 
@@ -146,7 +167,7 @@ vec3 skyIrradiance(float y, vec3 n) {
   vec3 sum = vec3(0.0);
   for (int i = 0; i < 5; i++) {
     vec3 transmittance;
-    sum += inScatter(ro, dirs[i], 1e7, 1.0, transmittance) * max(dot(n, dirs[i]) + 0.5, 0.0);
+    sum += inScatter(ro, dirs[i], SKY_DISTANCE, 1.0, transmittance) * max(dot(n, dirs[i]) + 0.5, 0.0);
   }
   aerosolG = AEROSOL_G;
   // Le sol plat reçoit 2,5 fois la luminance moyenne de ces directions (poids total 4,8)

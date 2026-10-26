@@ -99,6 +99,14 @@ export const DUNE_SINUOSITY = 0.15;
 /** Pentes du relief entre lesquelles les dunes fondent en une nappe de sable, qui le borde en rampe. */
 export const DUNE_CONTACT_SLOPE = [0.08, 0.25];
 
+// ---------- Terre ----------
+
+/**
+ * Rayon de courbure du monde (m) : rayon terrestre, multiplié par 7/6 pour la réfraction atmosphérique standard. Un
+ * point à la distance d paraît abaissé de d²/(2 EARTH_RADIUS) : depuis 12 m, l'horizon marin est à 13 km.
+ */
+export const EARTH_RADIUS = (6371000 * 7) / 6;
+
 // ---------- Export vers le shader ----------
 
 const GLSL_INTS: Record<string, number> = {
@@ -141,6 +149,7 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   DUNE_WARP,
   DUNE_SINUOSITY,
   DUNE_CONTACT_SLOPE,
+  EARTH_RADIUS,
 };
 
 function glslFloat(value: number): string {

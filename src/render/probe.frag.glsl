@@ -32,7 +32,8 @@ vec3 sunOcclusion(float camY, float below) {
   float growth = max(1.2, pow(SUN_RANGE / first, 1.0 / float(SUN_STEPS - 1)));
   float d = first;
   for (int i = 0; i < SUN_STEPS; i++, d *= growth) {
-    float y = camY + uSunDir.y * d;
+    // Le rayon vers le soleil s'élève au-dessus de la sphère (voir rayPoint)
+    float y = camY + uSunDir.y * d + d * d * dot(uSunDir.xz, uSunDir.xz) * 0.5 / EARTH_RADIUS;
     if (y > uMaxH) break;
     float g = max(ground(uSunDir.xz * d), uWater);
     visible = min(visible, smoothstep(-SUN_RADIUS, SUN_RADIUS, (y - g) / d));

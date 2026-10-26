@@ -200,7 +200,7 @@ vec3 waterNormal(vec3 p, float t) {
 }
 
 // Eau : reflet ridé du relief et du ciel selon Fresnel, reflet du soleil, fond visible et teinté par l'absorption
-// quand l'eau est peu profonde, écume au bord
+// quand l'eau est peu profonde, écume au bord. rd : direction du rayon à la surface, courbure comprise (rayDir)
 vec3 shadeWater(vec3 p, vec3 rd, float t) {
   vec3 n = waterNormal(p, t);
   vec3 r = reflect(rd, n);
@@ -212,7 +212,13 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
   // En aperçu, plus grossier encore et sans ombre portée
   bool preview = uPreview > 0.5;
   float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, preview ? 3.0 : 2.0, preview ? 120 : 200);
-  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, preview ? 0 : 24), p, r, tr, 0.0) : sky(r, 0.0);
+  // Un reflet rasant épuise ses pas au-dessus du fond marin : il reflète le ciel
+  if (tr > 0.0 && terrain(p.xz + r.xz * tr, lod(t + tr)) < uWater) tr = -1.0;
+  vec3 reflection = sky(r, 0.0);
+  if (tr > 0.0) {
+    vec3 hit = rayPoint(p, r, tr);
+    reflection = applyFog(shadeTerrain(hit, t + tr, preview ? 0 : 24), p, hit, 0.0);
+  }
   float shadow = preview ? 1.0 : softShadow(p, uSunDir, t, 16);
 
   // Reflet du soleil (GGX), d'autant plus diffus que l'eau est loin et que ses rides ne sont plus résolues
