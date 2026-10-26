@@ -49,7 +49,7 @@ export const params: Params = {
   sunElevation: 12,
   sunAzimuth: 250,
   fog: 0.4,
-  exposure: 0.75,
+  exposure: 1.3,
   fov: 55,
   speed: 300,
   targetFps: 30,

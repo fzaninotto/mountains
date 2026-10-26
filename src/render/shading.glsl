@@ -1,26 +1,36 @@
-// ---------- Éclairage et matériaux ----------
+// ---------- Matériaux et éclairage ----------
 
-vec3 sky(vec3 rd) {
-  vec3 col = mix(horizonCol, skyCol, pow(max(rd.y, 0.0), 0.45));
-  float s = max(dot(rd, uSunDir), 0.0);
-  col += sunCol * (0.12 * pow(s, 6.0) + 0.35 * pow(s, 64.0));
-  col += sunCol * 8.0 * smoothstep(0.9997, 0.9999, s);
-  return col;
-}
+// Épaisseur des strates de roche (m)
+const float STRATA_THICKNESS = 14.0;
 
-// Brume dont la densité décroît avec l'altitude, intégrée analytiquement le long du rayon
-vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
-  const float falloff = 1.0 / 1500.0;
-  float k = rd.y * falloff;
-  float optical = uFog * exp(-ro.y * falloff) * (abs(k) > 1e-7 ? (1.0 - exp(min(-t * k, 80.0))) / k : t);
-  float amount = 1.0 - exp(-max(optical, 0.0));
-  float s = pow(max(dot(rd, uSunDir), 0.0), 8.0);
-  vec3 fogCol = mix(horizonCol, sunCol * 0.9, s * 0.6);
-  return mix(col, fogCol, amount);
+// Relief autour d'un point vu depuis la distance t : normale fine (lumière), normale des formes quelques fois plus
+// grandes que le pixel (répartition des matériaux, qui ne doit pas suivre le moindre détail), et cavité, négative
+// dans les creux et positive sur les bosses (occlusion, neige, végétation)
+struct Surface {
+  vec3 normal;
+  vec3 coarse;
+  float cavity;
+};
+
+Surface surfaceAt(vec3 p, float t) {
+  Surface s;
+  s.normal = calcNormal(p, t);
+  float octaves = lod(t);
+  float coarseOctaves = max(octaves - 3.0, 1.0);
+  float e = max(t * lodPixelAngle * 8.0, 0.5);
+  float h = terrain(p.xz, octaves);
+  float hc = terrain(p.xz, coarseOctaves);
+  s.coarse = normalize(vec3(
+    hc - terrain(p.xz + vec2(e, 0.0), coarseOctaves),
+    e,
+    hc - terrain(p.xz + vec2(0.0, e), coarseOctaves)
+  ));
+  s.cavity = clamp((h - hc) / e, -1.0, 1.0);
+  return s;
 }
 
 // Variation de couleur à grande échelle (375 m à 47 m) : fBm des octaves tournées du relief, décalé pour ne pas
-// reproduire ses formes
+// reproduire ses formes. En 2D : il s'étirerait sur les parois, où rockVariation() prend le relais
 float colorVariation(vec2 x) {
   vec2 q = x / uScale;
   float a = 0.0, b = 1.0, norm = 0.0;
@@ -35,59 +45,140 @@ float colorVariation(vec2 x) {
   return a / norm;
 }
 
-vec3 terrainAlbedo(vec3 p, vec3 n, float t) {
-  float variation = colorVariation(p.xz);
+// Équivalent 3D de colorVariation pour les pentes raides (octaves de 120 m et 48 m du bruit de la roche)
+float rockVariation(vec3 p) {
+  return 0.65 * gradientNoise3(rockSpace(p, 0) + 0.25, uRockCell[0]) + 0.35 * gradientNoise3(rockSpace(p, 1) + 0.25, uRockCell[1]);
+}
+
+vec3 terrainAlbedo(vec3 p, Surface s, float t) {
+  float footprint = t * lodPixelAngle;
+  float steep = smoothstep(0.25, 0.5, 1.0 - s.coarse.y);
+  float flatVariation = colorVariation(p.xz);
+  float steepVariation = rockVariation(p);
+  float variation = mix(flatVariation, steepVariation, steep);
   vec3 c = climate(p.xz);
   float desert = c.y;
 
-  // Roche : grise en climat tempéré, ocre en climat aride, tachée à plusieurs échelles
-  float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, t * lodPixelAngle), 0.0, 1.0);
+  // Roche : grise en climat tempéré, brun-rouge en climat aride, tachée à plusieurs échelles
+  float tone = clamp(0.5 + 0.35 * variation + 0.35 * rockStain(p, footprint), 0.0, 1.0);
   vec3 col = mix(
     mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), tone),
-    mix(vec3(0.24, 0.13, 0.07), vec3(0.4, 0.24, 0.13), tone),
+    mix(vec3(0.2, 0.1, 0.055), vec3(0.36, 0.2, 0.11), tone),
     desert
   );
 
-  // Végétation : sur le plat, sous la limite de végétation, hors désert
-  float vegetation = smoothstep(0.78, 0.92, n.y) * (1.0 - desert)
+  // Strates sur les pentes raides : bandes de teintes différentes, légèrement inclinées et ondulées,
+  // effacées quand elles deviennent plus fines que quelques pixels
+  float strataPhase = (p.y + 25.0 * steepVariation) / STRATA_THICKNESS;
+  float layer = fract(sin(floor(strataPhase) * 12.9898) * 43758.5453);
+  float edge = smoothstep(0.0, 0.15, fract(strataPhase)) * smoothstep(1.0, 0.85, fract(strataPhase));
+  vec3 strataTint = mix(vec3(0.85, 0.86, 0.9), vec3(1.15, 1.04, 0.88), layer) * (0.88 + 0.12 * edge);
+  col *= mix(vec3(1.0), strataTint, steep * smoothstep(2.0 * footprint, 6.0 * footprint, STRATA_THICKNESS));
+
+  // Végétation : là où les formes (et non le détail du pixel) sont peu pentues, davantage dans les creux,
+  // sous la limite de végétation, hors désert. Prairies claires, herbe sèche et taches sombres de forêt en bas
+  float gentle = mix(s.normal.y, s.coarse.y, 0.75) - 0.06 * s.cavity + 0.04 * variation;
+  float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - desert)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
-  col = mix(col, mix(vec3(0.07, 0.10, 0.03), vec3(0.18, 0.20, 0.07), 0.5 + 0.5 * variation), vegetation);
+  vec3 grass = mix(vec3(0.07, 0.10, 0.035), vec3(0.16, 0.16, 0.075), 0.5 + 0.5 * variation);
+  float forest = smoothstep(0.05, 0.35, -variation) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
+  grass = mix(grass, vec3(0.035, 0.055, 0.03), forest);
+  col = mix(col, grass, vegetation);
 
-  // Sable : sur les rivages en pente douce, et sur tout le plat en désert
-  float shore = 1.0 - smoothstep(uWater + 1.0, uWater + 3.5 + variation * 1.5, p.y);
-  float sand = max(shore, desert * lowland(c.x)) * smoothstep(0.6, 0.85, n.y);
-  col = mix(col, mix(vec3(0.42, 0.36, 0.25), vec3(0.5, 0.32, 0.16), desert), sand);
+  // Sable : plages des côtes marines (pas des lacs), de largeur variable, et tout le plat en désert
+  float coastal = 1.0 - smoothstep(0.22, 0.3, c.x);
+  float beachTop = uWater + 1.0 + 3.5 * (0.5 + 0.5 * flatVariation);
+  float beach = coastal * (1.0 - smoothstep(beachTop - 1.0, beachTop, p.y));
+  float sand = max(beach, desert * lowland(c.x)) * smoothstep(0.6, 0.85, mix(s.normal.y, s.coarse.y, 0.5));
+  col = mix(col, mix(vec3(0.46, 0.4, 0.29), vec3(0.62, 0.44, 0.27), desert), sand);
 
-  // Neige : au-dessus de la limite des neiges, sur les pentes où elle tient (d'autant plus raides qu'on monte)
-  float snow = smoothstep(uSnow - 150.0, uSnow + 150.0, p.y + variation * 300.0)
-    * smoothstep(0.55, 0.72, n.y + (p.y - uSnow) * 0.0001);
+  // Rive mouillée : sable ou terre plus sombres juste au-dessus de l'eau
+  float wet = 1.0 - smoothstep(uWater + 0.2, uWater + 1.2 + 0.6 * flatVariation, p.y);
+  col *= 1.0 - 0.4 * wet;
+
+  // Neige : la limite monte sur les versants au soleil et en climat aride ; elle tient dans les creux et
+  // sur les pentes douces, moins sur les bosses ventées
+  vec2 slopeDir = s.coarse.xz;
+  float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
+    * smoothstep(0.05, 0.3, length(slopeDir));
+  float snowLine = uSnow + 250.0 * sunward + 1200.0 * desert;
+  float hold = mix(s.normal.y, s.coarse.y, 0.5) - 0.12 * s.cavity + (p.y - snowLine) * 0.0001;
+  float snow = smoothstep(snowLine - 150.0, snowLine + 150.0, p.y + variation * 300.0) * smoothstep(0.55, 0.72, hold);
   return mix(col, vec3(0.85, 0.88, 0.92), snow);
 }
 
 vec3 shadeTerrain(vec3 p, float t, int shadowSteps) {
-  vec3 n = calcNormal(p, t);
-  vec3 albedo = terrainAlbedo(p, n, t);
+  Surface s = surfaceAt(p, t);
+  vec3 albedo = terrainAlbedo(p, s, t);
+  vec3 n = s.normal;
   float dif = max(dot(n, uSunDir), 0.0);
   float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t, shadowSteps) : 0.0;
-  float ambient = 0.5 + 0.5 * n.y;
-  // Lumière renvoyée par le sol éclairé en face
-  float bounce = max(dot(n, normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z))), 0.0) * (1.0 - n.y);
-  vec3 light = sunCol * dif * shadow * 3.2 + skyCol * ambient + horizonCol * bounce * 0.25;
-  return albedo * light;
+  // Les creux reçoivent moins de ciel et de lumière renvoyée
+  float occlusion = clamp(1.0 + 0.9 * s.cavity, 0.35, 1.0);
+  vec3 skyLight = skyCol * (0.5 + 0.5 * n.y) * occlusion;
+  // Lumière renvoyée par le sol éclairé alentour (albédo moyen d'environ 0,15)
+  vec3 bounce = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * 0.15 * clamp(0.5 - 0.5 * n.y, 0.0, 1.0) * occlusion;
+  return albedo * (sunCol * SUN_IRRADIANCE * dif * shadow + skyLight + bounce);
 }
 
-// Eau plane : reflet du terrain et du ciel selon Fresnel, fond sombre éclairé par le soleil hors de l'ombre
+// ---------- Eau ----------
+
+// Hauteur des rides (m) : bruit 3D de la roche sur le plan d'eau, octaves de 18 m à 1 m effacées sous un pixel
+float waveHeight(vec3 p, float footprint) {
+  float h = 0.0;
+  for (int i = 2; i < ROCK_OCTAVES; i++) {
+    float fade = rockFade(i, footprint);
+    if (fade <= 0.0) break;
+    h += fade * 0.012 * ROCK_WAVELENGTHS[i] * gradientNoise3(rockSpace(p, i) + 0.37, uRockCell[i]);
+  }
+  return h;
+}
+
+vec3 waterNormal(vec3 p, float t) {
+  float footprint = t * lodPixelAngle;
+  float e = max(footprint, 0.05);
+  float h = waveHeight(p, footprint);
+  return normalize(vec3(h - waveHeight(p + vec3(e, 0.0, 0.0), footprint), e, h - waveHeight(p + vec3(0.0, 0.0, e), footprint)));
+}
+
+// Eau : reflet ridé du relief et du ciel selon Fresnel, reflet du soleil, fond visible et teinté par l'absorption
+// quand l'eau est peu profonde, écume au bord
 vec3 shadeWater(vec3 p, vec3 rd, float t) {
-  vec3 r = reflect(rd, vec3(0.0, 1.0, 0.0));
-  float fresnel = 0.02 + 0.98 * pow(1.0 - max(-rd.y, 0.0), 5.0);
+  vec3 n = waterNormal(p, t);
+  vec3 r = reflect(rd, n);
+  r.y = abs(r.y);
+  float cosView = max(dot(-rd, n), 0.0);
+  float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
+
   // Reflet allégé : détail plus grossier, budget de pas et ombres réduits, invisibles une fois mêlés au Fresnel.
   // En aperçu, plus grossier encore et sans ombre portée
   bool preview = uPreview > 0.5;
   float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, preview ? 3.0 : 2.0, preview ? 120 : 200);
   vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, preview ? 0 : 24), p, r, tr) : sky(r);
   float shadow = preview ? 1.0 : softShadow(p, uSunDir, t, 16);
-  vec3 deep = vec3(0.01, 0.03, 0.04) * (skyCol + sunCol * shadow * max(uSunDir.y, 0.0) * 2.0);
-  return mix(deep, reflection, fresnel);
+
+  // Reflet du soleil (GGX), d'autant plus diffus que l'eau est loin et que ses rides ne sont plus résolues
+  float roughness = clamp(0.06 + t * lodPixelAngle * 0.03, 0.06, 0.35);
+  float a2 = roughness * roughness * roughness * roughness;
+  vec3 halfway = normalize(uSunDir - rd);
+  float nh = max(dot(n, halfway), 0.0);
+  float distribution = a2 / (3.14159 * pow(nh * nh * (a2 - 1.0) + 1.0, 2.0));
+  float sunFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfway, -rd), 0.0), 5.0);
+  vec3 specular = sunCol * SUN_IRRADIANCE * shadow * distribution * sunFresnel / max(4.0 * cosView, 0.1);
+
+  // Ce qu'on voit sous la surface : fond de sable plus ou moins absorbé (le rouge disparaît le premier), puis
+  // la couleur propre de l'eau profonde
+  vec3 light = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * shadow + skyCol;
+  float depth = max(uWater - terrain(p.xz, lod(t)), 0.0);
+  vec3 absorption = exp(-vec3(0.35, 0.09, 0.06) * depth * 1.6);
+  vec3 below = vec3(0.4, 0.35, 0.25) * light * absorption + vec3(0.008, 0.03, 0.04) * light * (1.0 - absorption);
+
+  // Écume sur les premiers décimètres de profondeur, en traînées, effacée sous la taille d'un pixel
+  float foamNoise = gradientNoise3(rockSpace(p, 4) + 0.71, uRockCell[4]);
+  float foam = (1.0 - smoothstep(0.0, 0.7, depth)) * mix(0.35, smoothstep(-0.1, 0.5, foamNoise), rockFade(4, t * lodPixelAngle));
+
+  vec3 col = mix(below, reflection, fresnel) + specular;
+  return mix(col, vec3(0.75) * light, foam * 0.8);
 }
 
 // Courbe de tons ACES (approximation de Narkowicz)

@@ -54,4 +54,3 @@ float pixelAngle;
 float lodPixelAngle;
 vec3 sunCol;
 vec3 skyCol;
-vec3 horizonCol;

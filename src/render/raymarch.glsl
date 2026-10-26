@@ -77,7 +77,7 @@ float softShadow(vec3 ro, vec3 rd, float tOffset, int maxSteps) {
     vec3 p = ro + rd * t;
     if (p.y > uMaxH || t > 30000.0) break;
     float h = surfaceDistance(p, tOffset + SHADOW_LOD * t);
-    res = min(res, 12.0 * h / t);
+    res = min(res, 22.0 * h / t);
     if (res < 0.001) break;
     t += clamp(h * 0.8, 0.3 + t * 0.03, 400.0 + t * 0.1);
   }

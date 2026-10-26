@@ -38,7 +38,8 @@ src/
 │   └── height.test.ts
 └── render/          Rendu WebGL2
     ├── renderer.ts  Programmes, cibles, envoi des uniformes ; assemble le shader de terrain
-    ├── uniforms.glsl, noise.glsl, climate.glsl, rock.glsl, height.glsl, raymarch.glsl, shading.glsl
+    ├── uniforms.glsl, noise.glsl, climate.glsl, rock.glsl, height.glsl, raymarch.glsl, atmosphere.glsl,
+    │   shading.glsl
     ├── terrain.frag.glsl  main() du shader de terrain
     └── fullscreen.vert.glsl, blit.frag.glsl
 ```

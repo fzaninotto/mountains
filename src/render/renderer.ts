@@ -6,6 +6,7 @@ import climateSource from './climate.glsl?raw';
 import rockSource from './rock.glsl?raw';
 import heightSource from './height.glsl?raw';
 import raymarchSource from './raymarch.glsl?raw';
+import atmosphereSource from './atmosphere.glsl?raw';
 import shadingSource from './shading.glsl?raw';
 import mainSource from './terrain.frag.glsl?raw';
 import { params, sunDirection } from '../params';
@@ -34,6 +35,7 @@ const TERRAIN_SOURCE = [
   rockSource,
   heightSource,
   raymarchSource,
+  atmosphereSource,
   shadingSource,
   mainSource,
 ].join('\n');
