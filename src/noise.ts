@@ -4,6 +4,8 @@ import { MAX_OCTAVES, params } from './params';
 
 export const MATERIAL_SCALE = 350;
 export const GROUND_OCTAVES = 16;
+const SNOW_SMOOTH_WAVELENGTH = 60;
+const SNOW_FLATTENING = 0.85;
 
 const TWO_32 = 4294967296;
 const mod32 = (v: number) => v - Math.floor(v / TWO_32) * TWO_32;
@@ -41,17 +43,38 @@ function noised(x: number, y: number, ox: number, oy: number): [number, number, 
   ];
 }
 
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+function snowSmoothing(h: number, slope: number): number {
+  return SNOW_FLATTENING * smoothstep(params.snow - 100, params.snow + 150, h) * (1 - smoothstep(0.35, 0.7, slope));
+}
+
 export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): number {
   const [ox, oy] = seedOffset();
   let qx = x / params.scale, qz = z / params.scale;
-  let a = 0, b = 1, dx = 0, dz = 0;
+  // Colonnes de la jacobienne dq/dx, pour connaître la vraie pente
+  let j0: [number, number] = [1 / params.scale, 0];
+  let j1: [number, number] = [0, 1 / params.scale];
+  let a = 0, b = 1, dx = 0, dz = 0, gradX = 0, gradZ = 0, wavelength = params.scale;
   for (let i = 0; i < octaves; i++) {
-    const [v, gx, gz] = noised(qx, qz, ox, oy);
-    dx += gx;
-    dz += gz;
-    a += (b * v) / (1 + dx * dx + dz * dz);
+    const [v, nx, nz] = noised(qx, qz, ox, oy);
+    dx += nx;
+    dz += nz;
+    let amplitude = b / (1 + dx * dx + dz * dz);
+    if (wavelength < SNOW_SMOOTH_WAVELENGTH) {
+      amplitude *= 1 - snowSmoothing(params.height * a, params.height * Math.hypot(gradX, gradZ));
+    }
+    a += amplitude * v;
+    gradX += amplitude * (j0[0] * nx + j0[1] * nz);
+    gradZ += amplitude * (j1[0] * nx + j1[1] * nz);
     b *= params.gain;
     [qx, qz] = rotate(qx, qz);
+    j0 = rotate(...j0);
+    j1 = rotate(...j1);
+    wavelength /= 2;
   }
   return params.height * a;
 }

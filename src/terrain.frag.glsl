@@ -30,6 +30,9 @@ out vec4 outColor;
 const mat2 M2 = mat2(0.8, -0.6, 0.6, 0.8);
 const float MATERIAL_SCALE = 350.0;
 const float TMAX = 80000.0;
+// Identiques à noise.ts
+const float SNOW_SMOOTH_WAVELENGTH = 60.0;
+const float SNOW_FLATTENING = 0.85;
 
 float pixelAngle;
 vec3 sunCol;
@@ -61,19 +64,31 @@ vec3 noised(vec2 x, uvec2 cell) {
   );
 }
 
+// La neige comble les petits reliefs sur les zones peu pentues au-dessus de la limite des neiges
+float snowSmoothing(float h, float slope) {
+  return SNOW_FLATTENING * smoothstep(uSnow - 100.0, uSnow + 150.0, h) * (1.0 - smoothstep(0.35, 0.7, slope));
+}
+
 // fBm à dérivées : les pentes accumulées atténuent les octaves suivantes, ce qui imite l'érosion
 float terrain(vec2 x, float octaves) {
   vec2 q = x / uScale;
-  float a = 0.0, b = 1.0;
+  mat2 jacobian = mat2(1.0 / uScale);
+  float a = 0.0, b = 1.0, wavelength = uScale;
   vec2 d = vec2(0.0);
+  vec2 grad = vec2(0.0);
   for (int i = 0; i < MAX_OCT; i++) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
     if (w <= 0.0) break;
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
     d += n.yz;
-    a += w * b * n.x / (1.0 + dot(d, d));
+    float amplitude = w * b / (1.0 + dot(d, d));
+    if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(uHeight * a, uHeight * length(grad));
+    a += amplitude * n.x;
+    grad += amplitude * (transpose(jacobian) * n.yz);
     b *= uGain;
     q = 2.0 * (M2 * q);
+    jacobian = 2.0 * (M2 * jacobian);
+    wavelength *= 0.5;
   }
   return uHeight * a;
 }
