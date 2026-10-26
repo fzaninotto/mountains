@@ -4,7 +4,9 @@ import type { Renderer, Target } from './render/renderer';
 
 // Ordonnancement des images. Le raymarching est trop coûteux pour calculer une image nette à chaque frame :
 // - en mouvement, on affiche un aperçu basse résolution, dont l'échelle s'adapte pour tenir params.targetFps ;
-// - à l'arrêt, l'image nette est calculée par bandes, sur plusieurs frames, pour que l'interface reste fluide ;
+// - à l'arrêt, l'image s'affine par niveaux de résolution, chacun deux fois plus fin que le précédent. Un niveau
+//   est calculé en coulisse, par bandes réparties sur plusieurs frames pour que l'interface reste fluide, et ne
+//   s'affiche qu'une fois complet : les pixels s'affinent sur toute l'image, sans balayage ;
 // - l'export calcule de même une image plus grande, puis la télécharge.
 
 /** Délai après le dernier mouvement avant de commencer l'image nette (ms). */
@@ -13,21 +15,34 @@ const MIN_MOVING_SCALE = 0.05;
 const MOVING_SCALE_STEP = 0.01;
 /** Nombre d'intervalles dont la médiane pilote la résolution de l'aperçu. */
 const INTERVAL_WINDOW = 5;
+/** Échelle à partir de laquelle l'affinage passe directement à la pleine résolution. */
+const FULL_LEVEL = 0.6;
 /** Au-delà de cet écart entre deux aperçus (ms), le mouvement s'était interrompu. */
 const MOTION_GAP = 250;
 
-/** Image calculée par bandes, de bas en haut. */
+/** Image calculée par bandes dans le coin width × height de target, à l'échelle scale de l'écran. */
 interface Job {
   target: Target;
   view: View;
   row: number;
+  width: number;
+  height: number;
+  scale: number;
+}
+
+/** Image affichée à l'écran : coin width × height de target, à l'échelle scale. */
+interface Shown {
+  target: Target;
+  width: number;
+  height: number;
+  scale: number;
 }
 
 export class FrameScheduler {
   private preview: Target | null = null;
-  private previewWidth = 1;
-  private previewHeight = 1;
-  private sharp: Target | null = null;
+  /** Double tampon de l'affinage : un niveau se calcule dans l'un pendant que l'autre reste affiché. */
+  private readonly levels: [Target | null, Target | null] = [null, null];
+  private shown: Shown | null = null;
   private exportTarget: Target | null = null;
   private refineJob: Job | null = null;
   private exportJob: Job | null = null;
@@ -71,14 +86,14 @@ export class FrameScheduler {
       Math.floor(canvas.width * factor),
       Math.floor(canvas.height * factor),
     );
-    this.exportJob = { target: this.exportTarget, view: this.camera.view(), row: 0 };
+    const { width, height } = this.exportTarget;
+    this.exportJob = { target: this.exportTarget, view: this.camera.view(), row: 0, width, height, scale: factor };
   }
 
   /** État affiché dans le HUD. */
   status(): string {
-    const progress = (job: Job) => Math.round((100 * job.row) / job.target.height);
-    if (this.exportJob) return `Export ${progress(this.exportJob)} %`;
-    if (this.refineJob) return `Affinage ${progress(this.refineJob)} %`;
+    if (this.exportJob) return `Export ${Math.round((100 * this.exportJob.row) / this.exportJob.height)} %`;
+    if (this.refineJob) return `Affinage ${Math.round(this.refineJob.scale * 100)} %`;
     return this.sharpDone ? 'Net' : `Aperçu ${Math.round(this.movingScale * 100)} % · ${this.previewFps()} img/s`;
   }
 
@@ -100,7 +115,7 @@ export class FrameScheduler {
       }
     } else if (this.dirty) {
       this.drawPreview(now);
-    } else if (!this.sharpDone && this.preview) {
+    } else if (!this.sharpDone && this.shown) {
       this.refine(now);
     } else {
       return;
@@ -127,47 +142,59 @@ export class FrameScheduler {
       Math.max(1, Math.round(canvas.height * params.movingScale)),
     );
     this.movingScale = Math.min(this.movingScale, params.movingScale);
-    this.previewWidth = Math.max(1, Math.min(this.preview.width, Math.round(canvas.width * this.movingScale)));
-    this.previewHeight = Math.max(1, Math.min(this.preview.height, Math.round(canvas.height * this.movingScale)));
-    renderer.renderRows(
-      this.preview,
-      this.camera.view(),
-      0,
-      this.previewHeight,
-      this.previewWidth,
-      this.previewHeight,
-      true,
-    );
-    renderer.copy(this.preview, null, this.previewWidth, this.previewHeight);
+    const width = Math.max(1, Math.min(this.preview.width, Math.round(canvas.width * this.movingScale)));
+    const height = Math.max(1, Math.min(this.preview.height, Math.round(canvas.height * this.movingScale)));
+    renderer.renderRows(this.preview, this.camera.view(), 0, height, width, height, true);
+    this.show({ target: this.preview, width, height, scale: this.movingScale });
     this.dirty = false;
     this.recordPreview(now);
   }
 
   private refine(now: number) {
-    const { renderer } = this;
-    if (!this.refineJob && now - this.changedAt > REFINE_DELAY) {
-      // L'image nette part de l'aperçu agrandi : les bandes pas encore calculées restent lisibles
-      this.sharp = renderer.ensureTarget(this.sharp, this.canvas.width, this.canvas.height);
-      renderer.copy(this.preview!, this.sharp, this.previewWidth, this.previewHeight);
-      this.refineJob = { target: this.sharp, view: this.camera.view(), row: 0 };
+    if (!this.refineJob) {
+      if (now - this.changedAt <= REFINE_DELAY) return;
+      this.startLevel(this.camera.view());
     }
-    if (!this.refineJob) return;
-    this.sharpDone = this.advance(this.refineJob);
-    renderer.copy(this.refineJob.target, null);
-    if (this.sharpDone) {
+    const job = this.refineJob!;
+    if (!this.advance(job)) return;
+    this.show(job);
+    if (job.scale >= 1) {
       this.refineJob = null;
+      this.sharpDone = true;
       this.onSharp();
+    } else {
+      this.startLevel(job.view);
     }
+  }
+
+  /** Prépare le niveau suivant, deux fois plus fin que l'image affichée, dans le tampon qui n'est pas à l'écran. */
+  private startLevel(view: View) {
+    const { canvas, renderer } = this;
+    // Au-delà de FULL_LEVEL, un niveau intermédiaire coûterait presque autant que l'image nette : on y va directement
+    const doubled = this.shown!.scale * 2;
+    const scale = doubled >= FULL_LEVEL ? 1 : doubled;
+    const slot = this.levels[0] && this.shown!.target === this.levels[0] ? 1 : 0;
+    const target = renderer.ensureTarget(this.levels[slot], canvas.width, canvas.height);
+    this.levels[slot] = target;
+    const width = Math.max(1, Math.round(canvas.width * scale));
+    const height = Math.max(1, Math.round(canvas.height * scale));
+    this.refineJob = { target, view, row: 0, width, height, scale };
+  }
+
+  /** Affiche une image, agrandie à la taille de l'écran. */
+  private show(image: Shown) {
+    this.renderer.copy(image.target, null, image.width, image.height);
+    this.shown = { target: image.target, width: image.width, height: image.height, scale: image.scale };
   }
 
   /** Calcule la bande suivante ; renvoie true quand l'image est complète. */
   private advance(job: Job): boolean {
     this.jobSubmitted = true;
-    const rows = Math.max(1, Math.floor(this.pixelBudget / job.target.width));
-    const end = Math.min(job.target.height, job.row + rows);
-    this.renderer.renderRows(job.target, job.view, job.row, end);
+    const rows = Math.max(1, Math.floor(this.pixelBudget / job.width));
+    const end = Math.min(job.height, job.row + rows);
+    this.renderer.renderRows(job.target, job.view, job.row, end, job.width, job.height);
     job.row = end;
-    return end >= job.target.height;
+    return end >= job.height;
   }
 
   // Une bande doit tenir en une trentaine de ms de GPU, pour que l'interface reste réactive
