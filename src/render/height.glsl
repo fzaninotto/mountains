@@ -63,7 +63,11 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
   slope = height * grad;
   if (wallSlope < 0.0) wallSlope = length(slope);
   float h = base + height * a;
-  h += cliffLift(h, c.z);
+  // La face d'une falaise est une paroi : sa vraie pente compte pour la distance, et elle est creusée en 3D
+  vec3 cliff = cliffLift(x, h, c.z);
+  h += cliff.x;
+  slope *= 1.0 + cliff.y;
+  wallSlope = max(wallSlope, cliff.z * WALL_SLOPE[1]);
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
 

@@ -28,8 +28,15 @@ export const FIELD_OCTAVES = 3;
 /** Ondulation des chaînes de montagnes par les champs continent et aridité, relative à leur échelle. */
 export const RANGE_WARP = 0.35;
 
-/** Hauteur dont les côtes à falaises sont relevées (m). */
+/** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,3 à 1,2 fois selon un bruit. */
 export const CLIFF_HEIGHT = 70;
+/** Dénivelé (m) sur lequel se forme la marche de la falaise : plus il est petit, plus la paroi est raide. */
+export const CLIFF_STEP = 3.5;
+/** Décalage (m, de 0 à cette valeur) de l'altitude du pied de falaise : découpe criques et caps. */
+export const CLIFF_JITTER = 6;
+/** Octaves du relief dont le bruit (décalé) module la hauteur des falaises, puis la position de leur pied. */
+export const CLIFF_HEIGHT_OCTAVE = 2;
+export const CLIFF_JITTER_OCTAVES = [5, 7];
 
 // ---------- Roche et érosion ----------
 
@@ -67,6 +74,9 @@ export const DUNE_CREST_WAVELENGTH = 600;
 // ---------- Export vers le shader ----------
 
 const GLSL_INTS: Record<string, number> = {
+  CLIFF_HEIGHT_OCTAVE,
+  CLIFF_JITTER_OCTAVE_FINE: CLIFF_JITTER_OCTAVES[1],
+  CLIFF_JITTER_OCTAVE: CLIFF_JITTER_OCTAVES[0],
   MAX_OCTAVES,
   BIOME_COUNT: BIOME_STOPS.length,
   FIELD_COUNT: FIELDS.length,
@@ -82,6 +92,8 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   FIELD_RATIO: FIELDS.map((field) => field.ratio),
   RANGE_WARP,
   CLIFF_HEIGHT,
+  CLIFF_STEP,
+  CLIFF_JITTER,
   STEEP_SLOPE,
   ROCK_ROUGHNESS,
   RIDGE_WAVELENGTH,

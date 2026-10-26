@@ -31,6 +31,17 @@ export function rotate(x: number, y: number): [number, number] {
 }
 
 /**
+ * Value noise de l'octave `octave` du relief en (x, z), décalé de `offset` dans l'espace du bruit pour ne pas
+ * reproduire les formes du relief. Identique à octaveNoise() dans src/render/climate.glsl.
+ */
+export function octaveNoise(x: number, z: number, octave: number, offset: [number, number]): number {
+  const [ox, oy] = seedOffset();
+  let qx = x / params.scale, qz = z / params.scale;
+  for (let i = 0; i < octave; i++) [qx, qz] = rotate(qx, qz);
+  return noised(qx + offset[0], qz + offset[1], ox, oy)[0];
+}
+
+/**
  * Value noise 2D avec dérivées analytiques (Inigo Quilez) : [valeur dans [-1, 1], d/dx, d/dy].
  * (ox, oy) décale les cellules (graine, champ, facteur d'échelle entier…).
  */

@@ -76,5 +76,5 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
 
   const minWavelength = params.scale * 2 ** -octaves;
   const h = base + height * a;
-  return h + cliffLift(h, cliff) + sand * dunes(x, z, minWavelength);
+  return h + cliffLift(x, z, h, cliff) + sand * dunes(x, z, minWavelength);
 }

@@ -1,7 +1,9 @@
 import { params } from '../params';
-import { CLIFF_HEIGHT, FIELD_OCTAVES, FIELDS, RANGE_WARP } from './constants';
+import {
+  CLIFF_HEIGHT, CLIFF_HEIGHT_OCTAVE, CLIFF_JITTER, CLIFF_JITTER_OCTAVES, CLIFF_STEP, FIELD_OCTAVES, FIELDS, RANGE_WARP,
+} from './constants';
 import { desertBias, mountainBias } from './biomes';
-import { noised, rotate, seedOffset, smoothstep } from './noise';
+import { noised, octaveNoise, rotate, seedOffset, smoothstep } from './noise';
 
 // Répartition des biomes, identique à climate() dans src/render/climate.glsl.
 
@@ -54,8 +56,19 @@ export function duneWeight(level: number, desert: number): number {
 
 /**
  * Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où le relief
- * traverse le niveau de l'eau, sur quelques mètres de dénivelé seulement, donc très raide.
+ * traverse l'altitude du pied de falaise, sur quelques mètres de dénivelé seulement, donc très raide.
+ * La hauteur varie le long de la côte, et le pied est plus ou moins haut au-dessus de l'eau, ce qui découpe criques
+ * et caps au lieu de suivre fidèlement le trait de côte. Identique à cliffLift() dans src/render/climate.glsl.
  */
-export function cliffLift(h: number, cliff: number): number {
-  return cliff * CLIFF_HEIGHT * smoothstep(params.water + 0.5, params.water + 4, h);
+export function cliffLift(x: number, z: number, h: number, cliff: number): number {
+  // Sorties exactes, qui évitent les bruits : sous le pied le plus bas, pas de relèvement ; au-dessus de la plus
+  // haute marche possible, le relèvement est complet
+  const lowestFoot = params.water + 0.5;
+  if (cliff <= 0 || h <= lowestFoot) return 0;
+  const height = CLIFF_HEIGHT * (0.3 + 0.9 * smoothstep(-0.5, 0.5, octaveNoise(x, z, CLIFF_HEIGHT_OCTAVE, [3.7, -1.3])));
+  if (h >= lowestFoot + CLIFF_JITTER + CLIFF_STEP) return cliff * height;
+  const notches = 0.6 * octaveNoise(x, z, CLIFF_JITTER_OCTAVES[0], [-6.1, 2.9])
+    + 0.4 * octaveNoise(x, z, CLIFF_JITTER_OCTAVES[1], [1.7, 8.3]);
+  const foot = lowestFoot + CLIFF_JITTER * (0.5 + 0.5 * notches);
+  return cliff * height * smoothstep(foot, foot + CLIFF_STEP, h);
 }

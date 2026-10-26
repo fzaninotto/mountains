@@ -54,10 +54,32 @@ float duneWeight(float level, float desert) {
   return desert * smoothstep(0.12, 0.2, level) * lowland(level);
 }
 
+// Value noise de l'octave `octave` du relief, décalé de `offset` pour ne pas reproduire ses formes
+float octaveNoise(vec2 x, int octave, vec2 offset) {
+  vec2 q = x / uScale;
+  for (int i = 0; i < octave; i++) q = 2.0 * (M2 * q);
+  return noised(uOctFrac[octave] + q + offset, uOctCell[octave]).x;
+}
+
 // Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où le relief
-// traverse le niveau de l'eau, sur quelques mètres de dénivelé seulement, donc très raide
-float cliffLift(float h, float cliff) {
-  return cliff * CLIFF_HEIGHT * smoothstep(uWater + 0.5, uWater + 4.0, h);
+// traverse l'altitude du pied de falaise, sur quelques mètres de dénivelé seulement, donc très raide.
+// La hauteur varie le long de la côte, et le pied est plus ou moins haut au-dessus de l'eau, ce qui découpe criques
+// et caps au lieu de suivre fidèlement le trait de côte.
+// Renvoie (relèvement, dérivée du relèvement par rapport à h, poids de paroi de la face)
+vec3 cliffLift(vec2 x, float h, float cliff) {
+  // Sorties exactes, qui évitent les bruits : sous le pied le plus bas, pas de relèvement ; au-dessus de la plus
+  // haute marche possible, le relèvement est complet
+  float lowestFoot = uWater + 0.5;
+  if (cliff <= 0.0 || h <= lowestFoot) return vec3(0.0);
+  float height = CLIFF_HEIGHT * (0.3 + 0.9 * smoothstep(-0.5, 0.5, octaveNoise(x, CLIFF_HEIGHT_OCTAVE, vec2(3.7, -1.3))));
+  if (h >= lowestFoot + CLIFF_JITTER + CLIFF_STEP) return vec3(cliff * height, 0.0, 0.0);
+  float notches = 0.6 * octaveNoise(x, CLIFF_JITTER_OCTAVE, vec2(-6.1, 2.9))
+    + 0.4 * octaveNoise(x, CLIFF_JITTER_OCTAVE_FINE, vec2(1.7, 8.3));
+  float foot = lowestFoot + CLIFF_JITTER * (0.5 + 0.5 * notches);
+  float s = clamp((h - foot) / CLIFF_STEP, 0.0, 1.0);
+  float lift = cliff * height * s * s * (3.0 - 2.0 * s);
+  float dLift = cliff * height * 6.0 * s * (1.0 - s) / CLIFF_STEP;
+  return vec3(lift, dLift, cliff * smoothstep(0.0, 0.5, 4.0 * s * (1.0 - s)));
 }
 
 // Hauteur des dunes (m) : crêtes (1 - |n|) d'un bruit étiré perpendiculairement au vent (axe x), ondulées par un
