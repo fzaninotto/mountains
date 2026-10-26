@@ -10,6 +10,7 @@ struct Surface {
   vec3 normal;
   vec3 coarse;
   float cavity;
+  float valley;
 };
 
 Surface surfaceAt(vec3 p, float t) {
@@ -26,6 +27,8 @@ Surface surfaceAt(vec3 p, float t) {
     hc - terrain(p.xz + vec2(0.0, e), coarseOctaves)
   ));
   s.cavity = clamp((h - hc) / e, -1.0, 1.0);
+  // Creux et bosses de 375 m et moins, à toute distance : négatif dans les vallons, positif sur les croupes
+  s.valley = clamp((terrain(p.xz, min(octaves, 4.0)) - h) / 30.0, -1.0, 1.0);
   return s;
 }
 
@@ -43,6 +46,25 @@ float colorVariation(vec2 x) {
     q = 2.0 * (M2 * q);
   }
   return a / norm;
+}
+
+// fBm des octaves first à last du relief, décalé, chaque octave effacée sous deux pixels (footprint en m)
+float vegetationNoise(vec2 x, vec2 offset, int first, int last, float footprint) {
+  vec2 q = x / uScale;
+  float wavelength = uScale;
+  float a = 0.0, b = 1.0, norm = 0.0;
+  for (int i = 0; i <= last; i++) {
+    if (i >= first) {
+      float fade = smoothstep(2.0 * footprint, 4.0 * footprint, wavelength);
+      if (fade <= 0.0) break;
+      a += fade * b * noised(uOctFrac[i] + q + offset, uOctCell[i]).x;
+      norm += b;
+      b *= 0.6;
+    }
+    q = 2.0 * (M2 * q);
+    wavelength *= 0.5;
+  }
+  return norm > 0.0 ? a / norm : 0.0;
 }
 
 // Équivalent 3D de colorVariation pour les pentes raides (octaves de 120 m et 48 m du bruit de la roche)
@@ -76,13 +98,25 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   col *= mix(vec3(1.0), strataTint, steep * smoothstep(2.0 * footprint, 6.0 * footprint, STRATA_THICKNESS));
 
   // Végétation : là où les formes (et non le détail du pixel) sont peu pentues, davantage dans les creux,
-  // sous la limite de végétation, hors désert. Prairies claires, herbe sèche et taches sombres de forêt en bas
+  // sous la limite de végétation, hors désert
   float gentle = mix(s.normal.y, s.coarse.y, 0.75) - 0.06 * s.cavity + 0.04 * variation;
   float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - desert)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
-  vec3 grass = mix(vec3(0.07, 0.10, 0.035), vec3(0.16, 0.16, 0.075), 0.5 + 0.5 * variation);
-  float forest = smoothstep(0.05, 0.35, -variation) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
-  grass = mix(grass, vec3(0.035, 0.055, 0.03), forest);
+
+  // Herbe : teinte qui varie doucement de quelques mètres à quelques centaines (frais, sec, plus sombre)
+  float patches = vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, footprint);
+  float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches, 0.0, 1.0);
+  vec3 grass = mix(vec3(0.075, 0.115, 0.04), vec3(0.15, 0.15, 0.07), dryness);
+  grass *= 1.0 + 0.18 * vegetationNoise(p.xz, vec2(5.3, 61.2), 9, 13, footprint);
+
+  // Forêt : massifs dont la couverture varie selon les régions, plutôt dans les vallons et sur les versants
+  // que sur les croupes, aux lisières découpées
+  float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, footprint);
+  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, footprint);
+  float hillside = smoothstep(0.995, 0.93, s.coarse.y);
+  float woods = 0.6 * edges + region + 0.5 * s.valley + 0.2 * hillside - 0.25;
+  float forest = 0.7 * smoothstep(0.0, 0.15, woods) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
+  grass = mix(grass, vec3(0.055, 0.08, 0.037) * (1.0 + 0.3 * edges), forest);
   col = mix(col, grass, vegetation);
 
   // Sable : plages des côtes marines (pas des lacs), de largeur variable, et tout le plat en désert
@@ -101,9 +135,9 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   vec2 slopeDir = s.coarse.xz;
   float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
     * smoothstep(0.05, 0.3, length(slopeDir));
-  float snowLine = uSnow + 250.0 * sunward + 1200.0 * desert;
-  float hold = mix(s.normal.y, s.coarse.y, 0.5) - 0.12 * s.cavity + (p.y - snowLine) * 0.0001;
-  float snow = smoothstep(snowLine - 150.0, snowLine + 150.0, p.y + variation * 300.0) * smoothstep(0.55, 0.72, hold);
+  float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
+  float hold = mix(s.normal.y, s.coarse.y, 0.5) - 0.05 * s.cavity + (p.y - snowLine) * 0.0002;
+  float snow = smoothstep(snowLine - 150.0, snowLine + 150.0, p.y + variation * 300.0) * smoothstep(0.5, 0.7, hold);
   return mix(col, vec3(0.85, 0.88, 0.92), snow);
 }
 
