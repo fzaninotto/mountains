@@ -112,6 +112,24 @@ struct Rock {
   float tint;
 };
 
+// Probabilité qu'une pierre se trouve en c, selon le relief :
+// beaucoup au pied des pentes raides (éboulis), quelques-unes sur les pentes moyennes,
+// rares sur le plat, aucune sur les falaises où elles ne tiendraient pas
+float rockProbability(vec2 c, float ground, float octaves) {
+  float coarse = min(octaves, log2(uScale / 8.0));
+  const float e = 4.0;
+  vec2 grad = vec2(terrain(c + vec2(e, 0.0), coarse) - ground, terrain(c + vec2(0.0, e), coarse) - ground) / e;
+  float slope = length(grad);
+  vec2 uphill = slope > 1e-4 ? grad / slope : vec2(0.0);
+  float rise = terrain(c + uphill * 20.0, coarse) - ground;
+
+  float talus = smoothstep(5.0, 18.0, rise) * (1.0 - smoothstep(0.6, 0.9, slope));
+  float rocky = smoothstep(0.25, 0.6, slope) * 0.5;
+  float cliff = 1.0 - smoothstep(0.9, 1.4, slope);
+  float patches = smoothstep(-0.6, 0.6, noised(uMatFrac + c / MATERIAL_SCALE, uMatCell).x);
+  return clamp(0.06 + talus + rocky, 0.0, 1.0) * cliff * mix(0.4, 1.0, patches);
+}
+
 // q : position dans la grille des pierres
 Rock makeRock(vec2 q, float octaves) {
   Rock r;
@@ -121,13 +139,18 @@ Rock makeRock(vec2 q, float octaves) {
   float extent = r.radius + ROCK_MARGIN;
   vec2 c = (r.key - uRockFrac) * ROCK_CELL + extent + vec2(rand(id, 2), rand(id, 3)) * (ROCK_CELL - 2.0 * extent);
 
-  // Les pierres se regroupent en éboulis là où le bruit de matériau est élevé
-  float cluster = noised(uMatFrac + c / MATERIAL_SCALE, uMatCell).x;
-  r.present = rand(id, 0) < uRockDensity * smoothstep(-0.4, 0.3, cluster);
+  // Test bon marché d'abord : la probabilité finale ne dépasse jamais la densité
+  float chance = rand(id, 0);
+  r.present = chance < uRockDensity;
   if (!r.present) return r;
 
   float ground = terrain(c, octaves);
-  r.present = ground > uWater;
+  float probability = rockProbability(c, ground, octaves);
+  r.present = ground > uWater && chance < uRockDensity * probability;
+  if (!r.present) return r;
+
+  // Les plus gros blocs se trouvent là où le relief en fournit (pied des pentes raides)
+  r.radius *= mix(0.4, 1.0, probability);
   r.center = vec3(c.x, ground + r.radius * 0.45, c.y);
   float a = rand(id, 4) * 6.2831853;
   r.rot = mat2(cos(a), sin(a), -sin(a), cos(a));
@@ -207,11 +230,12 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
         rock = makeRock(q, octaves);
         rockKey = rock.key;
       }
-      dRock = rockDistance(p, rock, q, footprint);
-      if (dRock < eps) {
+      // Le contact se teste sur la pierre elle-même : la borne du bord de cellule ne sert qu'à limiter le pas
+      if (rockSurface(p, rock, footprint) < eps) {
         hitRock = true;
         return t;
       }
+      dRock = rockDistance(p, rock, q, footprint);
     }
 
     if (dy < eps) {
