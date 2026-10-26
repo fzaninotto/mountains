@@ -27,7 +27,7 @@ Surface surfaceAt(vec3 p, float t) {
     hc - terrain(p.xz + vec2(0.0, e), coarseOctaves)
   ));
   s.cavity = clamp((h - hc) / e, -1.0, 1.0);
-  // Creux et bosses de 375 m et moins, à toute distance : négatif dans les vallons, positif sur les croupes
+  // Creux et bosses de 375 m et moins, à toute distance : positif dans les vallons, négatif sur les croupes
   s.valley = clamp((terrain(p.xz, min(octaves, 4.0)) - h) / 30.0, -1.0, 1.0);
   return s;
 }
@@ -67,12 +67,56 @@ float vegetationNoise(vec2 x, vec2 offset, int first, int last, float gain, floa
   return a / norm;
 }
 
+// Octave du relief dont chaque cellule (12 m) porte un arbre, et celle des buissons de la steppe (3 m)
+const int CROWN_OCTAVE = 9;
+const int SHRUB_OCTAVE = 11;
+// Part de la pente des houppiers reportée sur la normale
+const float CROWN_TILT = 0.15;
+// Direction du sud (azimut 180°) : versants au soleil (adrets) et à l'ombre (ubacs)
+const vec2 SOUTH = vec2(0.0, 1.0);
+
+// Houppiers : dans chaque cellule de l'octave `octave` du relief, un arbre placé au hasard, présent avec une
+// probabilité qui suit cover (part du sol couverte) : là où elle baisse, le couvert s'éclaircit en bosquets et en
+// arbres isolés de taille normale. Chaque houppier est un dôme lisse de hauteur égale à son rayon ; leur somme forme
+// une canopée bosselée sans arête. Renvoie la hauteur relative de la canopée (0 hors des houppiers, 1 au sommet d'un
+// arbre seul), sa pente, et une valeur aléatoire propre aux arbres, moyennée là où ils se touchent
+vec4 crowns(vec2 x, int octave, float cover) {
+  vec2 q = x / uScale;
+  mat2 jacobian = mat2(1.0 / uScale);
+  for (int i = 0; i < octave; i++) {
+    q = 2.0 * (M2 * q);
+    jacobian = 2.0 * (M2 * jacobian);
+  }
+  q += uOctFrac[octave];
+  vec2 fl = floor(q);
+  vec2 f = q - fl;
+  uvec2 cell = uvec2(ivec2(fl)) + uOctCell[octave];
+  float presence = min(1.2 * cover, 0.92);
+  float height = 0.0, tint = 0.0;
+  vec2 slope = vec2(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      uvec2 c = cell + uvec2(ivec2(i, j));
+      float a = hash(c + uvec2(7919u, 104729u)), b = hash(c + uvec2(65537u, 3571u));
+      if (fract(71.3 * a + 29.1 * b) >= presence) continue;
+      vec2 d = f - vec2(i, j) - 0.2 - 0.6 * vec2(a, b);
+      float r = 0.35 + 0.45 * fract(37.3 * a + 91.7 * b);
+      float h = max(1.0 - dot(d, d) / (r * r), 0.0);
+      height += h * h;
+      slope -= 4.0 * h * d / r;
+      tint += h * h * fract(113.1 * a + 57.9 * b);
+    }
+  }
+  slope = transpose(jacobian) * slope * (uScale / exp2(float(octave)));
+  return vec4(height, slope, height > 0.0 ? tint / height : 0.5);
+}
+
 // Équivalent 3D de colorVariation pour les pentes raides (octaves de 120 m et 48 m du bruit de la roche)
 float rockVariation(vec3 p) {
   return 0.65 * gradientNoise3(rockSpace(p, 0) + 0.25, uRockCell[0]) + 0.35 * gradientNoise3(rockSpace(p, 1) + 0.25, uRockCell[1]);
 }
 
-vec3 terrainAlbedo(vec3 p, Surface s, float t) {
+vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float footprint = t * lodPixelAngle;
   float steep = smoothstep(0.25, 0.5, 1.0 - s.coarse.y);
   float flatVariation = colorVariation(p.xz);
@@ -121,21 +165,68 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
   float patches = (0.5 + 0.5 * sideways) * vegetationNoise(p.xz, vec2(-41.7, 23.9), 8, 12, 0.6, depthFootprint);
   float tufts = sideways * vegetationNoise(p.xz, vec2(5.3, 61.2), 10, 13, 0.8, depthFootprint);
   float blades = sideways * vegetationNoise(p.xz, vec2(-12.7, 44.1), 14, 18, 1.0, depthFootprint);
-  float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches + 0.3 * tufts + 0.3 * blades, 0.0, 1.0);
+  // Exposition : 1 sur un versant tourné plein sud, -1 plein nord, 0 sur le plat
+  vec2 slopeDir = s.coarse.xz;
+  float sunny = dot(slopeDir, SOUTH) / max(length(slopeDir), 0.05) * smoothstep(0.03, 0.2, length(slopeDir));
+  // Prairies plus fraîches dans les vallons humides, plus sèches sur les croupes et les adrets
+  float dryness = clamp(0.5 + 0.45 * flatVariation + 0.35 * patches + 0.3 * tufts + 0.3 * blades
+    - 0.3 * s.valley + 0.15 * sunny, 0.0, 1.0);
   vec3 grass = mix(vec3(0.075, 0.115, 0.04), vec3(0.15, 0.15, 0.07), dryness);
   grass *= 1.0 + 0.4 * tufts + 0.8 * blades;
   // Vers le désert, l'herbe sèche en steppe paille plutôt que de se mêler au sol brun
-  grass = mix(grass, vec3(0.2, 0.16, 0.075) * (1.0 + 0.3 * tufts), smoothstep(0.0, 0.5, desert));
+  float steppe = smoothstep(0.0, 0.5, desert);
+  grass = mix(grass, vec3(0.2, 0.16, 0.075) * (1.0 + 0.3 * tufts), steppe);
 
-  // Forêt : massifs dont la couverture varie selon les régions, plutôt dans les vallons et sur les versants
-  // que sur les croupes, aux lisières découpées
+  // Forêt : massifs dont la couverture varie selon les régions, plutôt dans les vallons humides, sur les versants
+  // et les ubacs que sur les croupes et les adrets, aux lisières découpées qui s'égrènent en bosquets et en arbres
+  // isolés. La limite des arbres ondule elle aussi ; ils ne poussent pas entre les affleurements rocheux
   float region = vegetationNoise(p.xz, vec2(-73.1, 12.4), 1, 2, 0.6, depthFootprint);
-  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 10, 0.6, depthFootprint);
+  float edges = vegetationNoise(p.xz, vec2(31.9, -57.3), 4, 8, 0.6, depthFootprint);
   float hillside = smoothstep(0.995, 0.93, s.coarse.y);
-  float woods = 0.6 * edges + region + 0.5 * s.valley + 0.2 * hillside - 0.25;
-  float forest = 0.7 * smoothstep(0.0, 0.15, woods) * (1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y));
-  grass = mix(grass, vec3(0.055, 0.08, 0.037) * (1.0 + 0.3 * edges), forest);
-  col = mix(col, grass, vegetation);
+  float woods = 0.6 * edges + region + 0.5 * s.valley + 0.2 * hillside - 0.15 * sunny - 0.25;
+  float treeLine = 1.0 - smoothstep(uVegetation - 600.0, uVegetation - 200.0, p.y + 200.0 * edges);
+  float forest = smoothstep(0.0, 0.15, woods) * treeLine * (1.0 - steppe) * smoothstep(0.6, 1.0, vegetation);
+  // Essences : résineux bleu-vert sombres en altitude, sur les ubacs et par régions, feuillus plus clairs et plus
+  // jaunes ailleurs ; à la limite des deux, les peuplements se mêlent arbre par arbre
+  float stands = vegetationNoise(p.xz, vec2(-19.3, 7.7), 3, 6, 0.6, depthFootprint);
+  float needles = clamp(0.3 + 1.2 * stands - 0.3 * sunny + (p.y - uVegetation + 900.0) / 700.0, 0.0, 1.0);
+  const vec3 broadleaf = vec3(0.075, 0.105, 0.04);
+  const vec3 conifer = vec3(0.04, 0.068, 0.05);
+  // Canopée inégale de 90 à 12 m (taches sombres, trouées), visible plus loin que les houppiers
+  float canopy = 1.0 + 0.3 * vegetationNoise(p.xz, vec2(53.1, -21.7), 6, 9, 0.7, depthFootprint);
+  // Sous les arbres, le sol est dans l'ombre
+  vec3 under = mix(grass, vec3(0.04, 0.055, 0.024), forest);
+  // Au loin, le mélange moyen : vus d'en haut, les houppiers couvrent environ les quatre cinquièmes de la part
+  // boisée, leur côté au soleil plus éclairé que le sol ; vus de biais, ils masquent le sol entre eux
+  float crownCover = mix(0.8 * min(1.2 * forest, 1.0), min(1.5 * forest, 1.0), 1.0 - smoothstep(0.1, 0.5, cosView));
+  vec3 green = mix(under, 1.15 * mix(broadleaf, conifer, needles) * canopy, crownCover);
+  // De près, chaque houppier : un dôme bosselé éclairé de côté (normale inclinée), plus clair au sommet, de teinte
+  // propre à l'arbre et à son essence, effacé sous deux à quatre pixels. Vus en rasant, ces dômes plats
+  // deviendraient des ellipses peintes au sol, et tout près, de larges facettes : ils s'effacent aussi
+  float crownCell = uScale / exp2(float(CROWN_OCTAVE));
+  float crownFade = smoothstep(2.0 * depthFootprint, 4.0 * depthFootprint, crownCell)
+    * smoothstep(0.1, 0.35, cosView) * smoothstep(150.0 * footprint, 50.0 * footprint, crownCell);
+  if (forest > 0.0 && crownFade > 0.0) {
+    vec4 tree = crowns(p.xz, CROWN_OCTAVE, forest);
+    tree.x += 0.2 * vegetationNoise(p.xz, vec2(-3.9, 27.1), 10, 11, 0.6, depthFootprint);
+    float inside = smoothstep(0.0, 0.15, tree.x);
+    vec3 leaf = mix(broadleaf, conifer, step(tree.w, needles)) * canopy * (0.75 + 0.5 * tree.w)
+      * (0.85 + 0.3 * min(tree.x, 1.0));
+    green = mix(green, mix(under, leaf, inside), crownFade);
+    s.normal = normalize(s.normal - vegetation * crownFade * inside * CROWN_TILT * vec3(tree.y, 0.0, tree.z));
+  }
+  // Steppe de transition : buissons sombres épars sur l'herbe sèche claire
+  float scrub = 0.3 * steppe * (1.0 - smoothstep(0.5, 0.9, desert));
+  float shrubFade = smoothstep(2.0 * depthFootprint, 4.0 * depthFootprint, uScale / exp2(float(SHRUB_OCTAVE)))
+    * smoothstep(0.1, 0.35, cosView);
+  vec3 shrub = vec3(0.1, 0.095, 0.05);
+  float shrubs = 0.7 * scrub;
+  if (scrub > 0.0 && shrubFade > 0.0) {
+    vec4 bush = crowns(p.xz, SHRUB_OCTAVE, scrub);
+    shrubs = mix(shrubs, smoothstep(0.0, 0.3, bush.x), shrubFade);
+  }
+  green = mix(green, shrub, shrubs);
+  col = mix(col, green, vegetation);
 
   // Sable : plages des côtes marines (pas des lacs), de largeur variable, et tout le plat en désert
   float coastal = 1.0 - smoothstep(0.22, 0.3, c.x);
@@ -152,7 +243,6 @@ vec3 terrainAlbedo(vec3 p, Surface s, float t) {
 
   // Neige : la limite monte sur les versants au soleil et en climat aride ; elle tient dans les creux et
   // sur les pentes douces, moins sur les bosses ventées
-  vec2 slopeDir = s.coarse.xz;
   float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
     * smoothstep(0.05, 0.3, length(slopeDir));
   float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
