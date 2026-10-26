@@ -21,10 +21,10 @@ void main() {
 
   // Le terrain n'est cherché que jusqu'à la surface de l'eau
   float tWater = rd.y < 0.0 ? (uWater - ro.y) / rd.y : -1.0;
-  float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0);
+  float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0, 1.0, 400);
 
   vec3 col;
-  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, t), ro, rd, t);
+  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, t, SHADOW_STEPS), ro, rd, t);
   else if (tWater > 0.0) col = applyFog(shadeWater(ro + rd * tWater, rd, tWater), ro, rd, tWater);
   else col = sky(rd);
 

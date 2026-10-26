@@ -4,8 +4,9 @@
 const float OMEGA = 1.6;
 
 // Distance le long du rayon jusqu'au terrain, ou -1 s'il n'est pas touché avant tmax.
-// tOffset : distance déjà parcourue depuis la caméra (rayons réfléchis), qui fixe le niveau de détail
-float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
+// tOffset : distance déjà parcourue depuis la caméra (rayons réfléchis), qui fixe le niveau de détail.
+// lodScale grossit ce niveau de détail et maxSteps borne le nombre de pas (reflets moins coûteux)
+float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset, float lodScale, int maxSteps) {
   float t = tmin;
   // Au-dessus du relief, on saute directement à son altitude maximale
   if (ro.y > uMaxH) {
@@ -19,6 +20,7 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
   float omega = OMEGA;
   bool relaxed = false;
   for (int i = 0; i < 400; i++) {
+    if (i >= maxSteps) break;
     // Le dernier pas peut enjamber tmax (la surface de l'eau) : on teste encore le terrain exactement à tmax
     if (t > tmax) {
       if (tPrev >= tmax) return -1.0;
@@ -27,8 +29,9 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
     vec3 p = ro + rd * t;
     if (p.y > uMaxH && rd.y >= 0.0) return -1.0;
     // Précision visée : un demi-pixel à cette distance
-    float eps = (t + tOffset) * pixelAngle * 0.5;
-    float dy = surfaceDistance(p, t + tOffset);
+    float tl = (t + tOffset) * lodScale;
+    float eps = tl * pixelAngle * 0.5;
+    float dy = surfaceDistance(p, tl);
     float r = dy * uStep;
     // Les intervalles sûrs autour de tPrev et de t ne se recouvrent plus (ou dy < 0) : le pas sur-relaxé
     // a pu traverser le relief, on refait un pas normal depuis tPrev
@@ -43,7 +46,7 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
       float lo = tPrev, hi = t;
       for (int j = 0; j < 6; j++) {
         float mid = 0.5 * (lo + hi);
-        if (surfaceDistance(ro + rd * mid, t + tOffset) < eps) hi = mid; else lo = mid;
+        if (surfaceDistance(ro + rd * mid, tl) < eps) hi = mid; else lo = mid;
       }
       return hi;
     }
