@@ -28,6 +28,7 @@ export function createGui(actions: Actions): GUI {
   look.add(params, 'water', -3000, 2000, 10).name('Niveau de l’eau (m)').onChange(terrainChanged);
   look.add(params, 'vegetation', -1000, 3000, 10).name('Limite de végétation (m)').onChange(viewChanged);
   look.add(params, 'snow', -500, 4000, 10).name('Limite des neiges (m)').onChange(viewChanged);
+  look.add(params, 'rockDensity', 0, 1, 0.01).name('Densité de pierres').onChange(viewChanged);
   look.add(params, 'sunElevation', -5, 90, 0.5).name('Hauteur du soleil').onChange(viewChanged);
   look.add(params, 'sunAzimuth', 0, 360, 1).name('Azimut du soleil').onChange(viewChanged);
   look.add(params, 'fog', 0, 4, 0.05).name('Brume').onChange(viewChanged);

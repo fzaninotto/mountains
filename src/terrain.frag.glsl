@@ -20,10 +20,13 @@ uniform float uVegetation;
 uniform float uSnow;
 uniform float uFog;
 uniform float uExposure;
+uniform float uRockDensity;
 uniform vec2 uOctFrac[MAX_OCT];
 uniform uvec2 uOctCell[MAX_OCT];
 uniform vec2 uMatFrac;
 uniform uvec2 uMatCell;
+uniform vec2 uRockFrac;
+uniform uvec2 uRockCell;
 
 out vec4 outColor;
 
@@ -31,10 +34,18 @@ const mat2 M2 = mat2(0.8, -0.6, 0.6, 0.8);
 const float MATERIAL_SCALE = 350.0;
 const float TMAX = 80000.0;
 
+// Pierres : une au plus par cellule, entièrement contenue dans sa cellule (ROCK_CELL identique à noise.ts)
+const float ROCK_CELL = 16.0;
+const float ROCK_MAX_RADIUS = 4.0;
+const float ROCK_MARGIN = 0.5;
+const float ROCK_SEARCH_HEIGHT = 10.0;
+const int ROCK_CUTS = 6;
+
 float pixelAngle;
 vec3 sunCol;
 vec3 skyCol;
 vec3 horizonCol;
+bool hitRock;
 
 // ---------- Bruit (identique à noise.ts) ----------
 
@@ -42,6 +53,10 @@ float hash(uvec2 x) {
   uvec2 q = 1103515245u * ((x >> 1u) ^ x.yx);
   uint n = 1103515245u * (q.x ^ (q.y >> 3u));
   return float(n) * (1.0 / 4294967295.0);
+}
+
+float rand(uvec2 id, int n) {
+  return hash(id + uint(n) * uvec2(1013u, 7919u));
 }
 
 vec3 noised(vec2 x, uvec2 cell) {
@@ -84,22 +99,121 @@ float lod(float t) {
   return clamp(log2(uScale / (2.0 * footprint)), 1.0, float(MAX_OCT));
 }
 
+// ---------- Pierres (SDF) ----------
+
+struct Rock {
+  vec2 key;
+  bool present;
+  vec3 center;
+  vec3 axes;
+  float radius;
+  mat2 rot;
+  vec4 cuts[ROCK_CUTS];
+  float tint;
+};
+
+// q : position dans la grille des pierres
+Rock makeRock(vec2 q, float octaves) {
+  Rock r;
+  r.key = floor(q);
+  uvec2 id = uvec2(ivec2(r.key)) + uRockCell;
+  r.radius = mix(0.5, ROCK_MAX_RADIUS, pow(rand(id, 1), 1.5));
+  float extent = r.radius + ROCK_MARGIN;
+  vec2 c = (r.key - uRockFrac) * ROCK_CELL + extent + vec2(rand(id, 2), rand(id, 3)) * (ROCK_CELL - 2.0 * extent);
+
+  // Les pierres se regroupent en éboulis là où le bruit de matériau est élevé
+  float cluster = noised(uMatFrac + c / MATERIAL_SCALE, uMatCell).x;
+  r.present = rand(id, 0) < uRockDensity * smoothstep(-0.4, 0.3, cluster);
+  if (!r.present) return r;
+
+  float ground = terrain(c, octaves);
+  r.present = ground > uWater;
+  r.center = vec3(c.x, ground + r.radius * 0.45, c.y);
+  float a = rand(id, 4) * 6.2831853;
+  r.rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+  r.axes = r.radius * vec3(1.0, mix(0.45, 0.8, rand(id, 5)), mix(0.65, 1.0, rand(id, 6)));
+  // Plans de coupe aléatoires : donnent des faces taillées
+  for (int k = 0; k < ROCK_CUTS; k++) {
+    float theta = rand(id, 7 + k) * 6.2831853;
+    float elevation = mix(-0.3, 1.2, rand(id, 13 + k));
+    vec3 n = vec3(cos(elevation) * cos(theta), sin(elevation), cos(elevation) * sin(theta));
+    r.cuts[k] = vec4(n, mix(0.35, 0.7, rand(id, 19 + k)));
+  }
+  r.tint = rand(id, 25);
+  return r;
+}
+
+float rockShape(vec3 p, Rock r) {
+  vec3 d = p - r.center;
+  d.xz = r.rot * d.xz;
+  float k0 = length(d / r.axes);
+  float k1 = length(d / (r.axes * r.axes));
+  float e = k0 * (k0 - 1.0) / max(k1, 1e-6);
+  for (int k = 0; k < ROCK_CUTS; k++) e = max(e, dot(d, r.cuts[k].xyz) - r.cuts[k].w * r.radius);
+  return e * 0.8;
+}
+
+// Distance à la pierre de la cellule, ou l'infini si elle est absente ou plus petite qu'un pixel
+float rockSurface(vec3 p, Rock r, float footprint) {
+  return r.present && r.radius > footprint ? rockShape(p, r) : 1e9;
+}
+
+// Borne inférieure de la distance à toutes les pierres : celles des cellules voisines
+// sont au moins à la distance du bord de la cellule plus la marge
+float rockDistance(vec3 p, Rock r, vec2 q, float footprint) {
+  vec2 f = q - r.key;
+  float border = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * ROCK_CELL + ROCK_MARGIN;
+  return min(rockSurface(p, r, footprint), border);
+}
+
+bool rocksVisible(float dy, float footprint) {
+  return uRockDensity > 0.0 && dy < ROCK_SEARCH_HEIGHT && footprint < ROCK_MAX_RADIUS * 0.5;
+}
+
+vec3 rockNormal(vec3 p, Rock r) {
+  const vec2 k = vec2(1.0, -1.0);
+  const float e = 0.005;
+  return normalize(
+    k.xyy * rockShape(p + k.xyy * e, r) + k.yyx * rockShape(p + k.yyx * e, r) +
+    k.yxy * rockShape(p + k.yxy * e, r) + k.xxx * rockShape(p + k.xxx * e, r)
+  );
+}
+
 // ---------- Raymarching ----------
 
 float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
+  hitRock = false;
   float t = tmin;
   if (ro.y > uMaxH) {
     if (rd.y >= 0.0) return -1.0;
     t = max(t, (ro.y - uMaxH) / -rd.y);
   }
   float tPrev = t;
+  vec2 rockKey = vec2(1e9);
+  Rock rock;
   for (int i = 0; i < 400; i++) {
     if (t > tmax) return -1.0;
     vec3 p = ro + rd * t;
     if (p.y > uMaxH && rd.y >= 0.0) return -1.0;
     float octaves = lod(t + tOffset);
+    float footprint = (t + tOffset) * pixelAngle * uDetail;
     float eps = (t + tOffset) * pixelAngle * 0.5;
     float dy = p.y - terrain(p.xz, octaves);
+
+    float dRock = 1e9;
+    if (rocksVisible(dy, footprint)) {
+      vec2 q = uRockFrac + p.xz / ROCK_CELL;
+      if (floor(q) != rockKey) {
+        rock = makeRock(q, octaves);
+        rockKey = rock.key;
+      }
+      dRock = rockDistance(p, rock, q, footprint);
+      if (dRock < eps) {
+        hitRock = true;
+        return t;
+      }
+    }
+
     if (dy < eps) {
       float lo = tPrev, hi = t;
       for (int j = 0; j < 6; j++) {
@@ -110,21 +224,32 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset) {
       return hi;
     }
     tPrev = t;
-    t += max(dy * uStep, eps);
+    t += max(min(dy * uStep, dRock), eps);
   }
   return t < tmax ? t : -1.0;
 }
 
 float softShadow(vec3 ro, vec3 rd, float tOffset) {
   float res = 1.0;
-  float t = max(0.5, tOffset * pixelAngle * 2.0);
+  float t = max(0.05, tOffset * pixelAngle * 2.0);
+  vec2 rockKey = vec2(1e9);
+  Rock rock;
   for (int i = 0; i < 80; i++) {
     vec3 p = ro + rd * t;
     if (p.y > uMaxH || t > 30000.0) break;
     float h = p.y - terrain(p.xz, lod(tOffset + t));
+    float footprint = (tOffset + t) * pixelAngle * uDetail;
+    if (rocksVisible(h, footprint)) {
+      vec2 q = uRockFrac + p.xz / ROCK_CELL;
+      if (floor(q) != rockKey) {
+        rock = makeRock(q, lod(tOffset + t));
+        rockKey = rock.key;
+      }
+      h = min(h, rockSurface(p, rock, footprint));
+    }
     res = min(res, 12.0 * h / t);
     if (res < 0.001) break;
-    t += clamp(h * 0.5, 0.3 + t * 0.02, 400.0 + t * 0.1);
+    t += clamp(h * 0.5, 0.05 + t * 0.02, 400.0 + t * 0.1);
   }
   return smoothstep(0.0, 1.0, clamp(res, 0.0, 1.0));
 }
@@ -160,35 +285,58 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
   return mix(col, fogCol, amount);
 }
 
-vec3 terrainAlbedo(vec3 p, vec3 n) {
+vec3 light(vec3 p, vec3 n, vec3 albedo, float t, float occlusion) {
+  float dif = max(dot(n, uSunDir), 0.0);
+  float shadow = dif > 0.0 ? softShadow(p + n * max(0.02, t * pixelAngle * 2.0), uSunDir, t) : 0.0;
+  float ambient = (0.5 + 0.5 * n.y) * occlusion;
+  float bounce = max(dot(n, normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z))), 0.0) * (1.0 - n.y) * occlusion;
+  return albedo * (sunCol * dif * shadow * 3.2 + skyCol * ambient + horizonCol * bounce * 0.25);
+}
+
+float snowCover(vec3 p, vec3 n, float variation) {
+  return smoothstep(uSnow - 150.0, uSnow + 150.0, p.y + variation * 300.0)
+    * smoothstep(0.55, 0.72, n.y + (p.y - uSnow) * 0.0001);
+}
+
+vec3 shadeTerrain(vec3 p, float t) {
+  vec3 n = calcNormal(p, t);
   float variation = noised(uMatFrac + p.xz / MATERIAL_SCALE, uMatCell).x;
-  vec3 col = mix(vec3(0.13, 0.11, 0.09), vec3(0.27, 0.24, 0.21), 0.5 + 0.5 * variation);
+  vec3 albedo = mix(vec3(0.13, 0.11, 0.09), vec3(0.27, 0.24, 0.21), 0.5 + 0.5 * variation);
 
   float vegetation = smoothstep(0.78, 0.92, n.y)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
-  col = mix(col, mix(vec3(0.07, 0.10, 0.03), vec3(0.18, 0.20, 0.07), 0.5 + 0.5 * variation), vegetation);
+  albedo = mix(albedo, mix(vec3(0.07, 0.10, 0.03), vec3(0.18, 0.20, 0.07), 0.5 + 0.5 * variation), vegetation);
+  albedo = mix(albedo, vec3(0.85, 0.88, 0.92), snowCover(p, n, variation));
 
-  float snow = smoothstep(uSnow - 150.0, uSnow + 150.0, p.y + variation * 300.0)
-    * smoothstep(0.55, 0.72, n.y + (p.y - uSnow) * 0.0001);
-  return mix(col, vec3(0.85, 0.88, 0.92), snow);
+  // Assombrit le sol au pied des pierres
+  float occlusion = 1.0;
+  float footprint = t * pixelAngle * uDetail;
+  if (rocksVisible(0.0, footprint)) {
+    Rock r = makeRock(uRockFrac + p.xz / ROCK_CELL, lod(t));
+    occlusion = clamp(0.3 + 0.7 * rockSurface(p, r, footprint) / (0.5 * r.radius), 0.0, 1.0);
+  }
+  return light(p, n, albedo, t, occlusion);
 }
 
-vec3 shadeTerrain(vec3 p, vec3 rd, float t) {
-  vec3 n = calcNormal(p, t);
-  vec3 albedo = terrainAlbedo(p, n);
-  float dif = max(dot(n, uSunDir), 0.0);
-  float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t) : 0.0;
-  float ambient = 0.5 + 0.5 * n.y;
-  float bounce = max(dot(n, normalize(vec3(-uSunDir.x, 0.0, -uSunDir.z))), 0.0) * (1.0 - n.y);
-  vec3 light = sunCol * dif * shadow * 3.2 + skyCol * ambient + horizonCol * bounce * 0.25;
-  return albedo * light;
+vec3 shadeRock(vec3 p, float t) {
+  Rock r = makeRock(uRockFrac + p.xz / ROCK_CELL, lod(t));
+  vec3 n = rockNormal(p, r);
+  vec3 albedo = mix(vec3(0.09, 0.085, 0.08), vec3(0.22, 0.21, 0.2), r.tint);
+  albedo = mix(albedo, vec3(0.2, 0.21, 0.1), 0.35 * smoothstep(0.5, 0.9, n.y) * (1.0 - r.tint));
+  albedo = mix(albedo, vec3(0.85, 0.88, 0.92), snowCover(p, n, 0.0) * smoothstep(0.75, 0.95, n.y));
+  float base = clamp((p.y - r.center.y + r.radius * 0.45) / r.radius, 0.0, 1.0);
+  return light(p, n, albedo, t, 0.45 + 0.55 * base);
+}
+
+vec3 shadeHit(vec3 p, float t, bool rock) {
+  return rock ? shadeRock(p, t) : shadeTerrain(p, t);
 }
 
 vec3 shadeWater(vec3 p, vec3 rd, float t) {
   vec3 r = reflect(rd, vec3(0.0, 1.0, 0.0));
   float fresnel = 0.02 + 0.98 * pow(1.0 - max(-rd.y, 0.0), 5.0);
   float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t);
-  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, r, t + tr), p, r, tr) : sky(r);
+  vec3 reflection = tr > 0.0 ? applyFog(shadeHit(p + r * tr, t + tr, hitRock), p, r, tr) : sky(r);
   float shadow = softShadow(p, uSunDir, t);
   vec3 deep = vec3(0.01, 0.03, 0.04) * (skyCol + sunCol * shadow * max(uSunDir.y, 0.0) * 2.0);
   return mix(deep, reflection, fresnel);
@@ -218,7 +366,7 @@ void main() {
   float t = march(ro, rd, 0.1, tWater > 0.0 ? tWater : TMAX, 0.0);
 
   vec3 col;
-  if (t > 0.0) col = applyFog(shadeTerrain(ro + rd * t, rd, t), ro, rd, t);
+  if (t > 0.0) col = applyFog(shadeHit(ro + rd * t, t, hitRock), ro, rd, t);
   else if (tWater > 0.0) col = applyFog(shadeWater(ro + rd * tWater, rd, tWater), ro, rd, tWater);
   else col = sky(rd);
 
