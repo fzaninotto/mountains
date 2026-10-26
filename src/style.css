@@ -32,6 +32,9 @@ html, body {
 #hud {
   top: 16px;
   font-variant-numeric: tabular-nums;
+  white-space: pre-line;
+  max-width: calc(100vw - 300px);
+  overflow-wrap: anywhere;
 }
 
 #help {

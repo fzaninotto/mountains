@@ -21,8 +21,9 @@ const hud = document.querySelector<HTMLElement>('#hud')!;
 const renderer = new Renderer(canvas);
 const camera = new FlyCamera(canvas);
 
-// Point de départ, remplaçable dans l'URL : #x=12000&z=-3400&alt=400&yaw=1.2&pitch=-0.1
+// Point de départ, remplaçable dans l'URL : #x=12000&z=-3400&alt=400&yaw=1.2&pitch=-0.1&seed=1
 const start = new URLSearchParams(window.location.hash.slice(1));
+if (start.has('seed')) params.seed = Number(start.get('seed'));
 const startValue = (key: keyof typeof DEFAULT_START) => (start.has(key) ? Number(start.get(key)) : DEFAULT_START[key]);
 camera.x = startValue('x');
 camera.z = startValue('z');
@@ -125,16 +126,20 @@ function here(): [number, number] {
   return [level, desert];
 }
 
+// Vue courante au format de l'URL : visible dans le HUD (donc sur les captures d'écran) pour pouvoir la refaire
+function viewHash(): string {
+  const yaw = ((camera.yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  return `#x=${Math.round(camera.x)}&z=${Math.round(camera.z)}&alt=${Math.round(camera.y - camera.ground())}`
+    + `&yaw=${yaw.toFixed(3)}&pitch=${camera.pitch.toFixed(3)}&seed=${params.seed}`;
+}
+
 function updateHud() {
-  const clearance = camera.y - camera.ground();
   hud.textContent = [
     biomeName(...here()),
     `Altitude ${Math.round(camera.y)} m`,
-    `sol +${Math.round(clearance)} m`,
     `${Math.round(camera.speed())} m/s`,
-    `x ${(camera.x / 1000).toFixed(1)} km · z ${(camera.z / 1000).toFixed(1)} km`,
     status(),
-  ].join(' · ');
+  ].join(' · ') + '\n' + viewHash();
 }
 
 let last = performance.now();
@@ -175,7 +180,10 @@ function frame(now: number) {
     if (refineJob) {
       sharpDone = advance(refineJob);
       renderer.copy(refineJob.target, null);
-      if (sharpDone) refineJob = null;
+      if (sharpDone) {
+        refineJob = null;
+        history.replaceState(null, '', viewHash());
+      }
     }
   }
 
