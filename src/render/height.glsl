@@ -71,6 +71,12 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
 
+float terrain(vec2 x, float octaves) {
+  vec2 slope;
+  float wallSlope;
+  return terrainHeight(x, octaves, slope, wallSlope);
+}
+
 // Niveau de détail : nombre d'octaves dont la longueur d'onde dépasse deux pixels à la distance t
 float lod(float t) {
   float footprint = max(t, 0.01) * lodPixelAngle * uDetail;

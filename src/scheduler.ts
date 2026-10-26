@@ -144,9 +144,9 @@ export class FrameScheduler {
     this.movingScale = Math.min(this.movingScale, params.movingScale);
     const width = Math.max(1, Math.min(this.preview.width, Math.round(canvas.width * this.movingScale)));
     const height = Math.max(1, Math.min(this.preview.height, Math.round(canvas.height * this.movingScale)));
-    // Niveau de détail fixé sur la résolution maximale de l'aperçu, et non sur sa résolution du moment : sinon le
-    // relief (rivages, reflets…) changerait de forme à chaque ajustement de la résolution
-    const lodHeight = canvas.height * params.movingScale;
+    // Niveau de détail de l'image nette, et non celui de la résolution du moment : sinon le relief (rivages, reflets…)
+    // changerait de forme à chaque ajustement de la résolution, puis encore à l'arrêt
+    const lodHeight = canvas.height;
     renderer.renderRows(this.preview, this.camera.view(), 0, height, width, height, true, lodHeight);
     this.show({ target: this.preview, width, height, scale: this.movingScale });
     this.dirty = false;

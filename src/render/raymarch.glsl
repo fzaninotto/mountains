@@ -28,9 +28,10 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset, float lodSc
     }
     vec3 p = ro + rd * t;
     if (p.y > uMaxH && rd.y >= 0.0) return -1.0;
-    // Précision visée : un demi-pixel à cette distance
+    // Précision visée : un demi-pixel de référence à cette distance. Elle ne doit pas suivre la résolution de calcul,
+    // sinon les silhouettes et les rivages changeraient à chaque ajustement de la résolution de l'aperçu
     float tl = (t + tOffset) * lodScale;
-    float eps = tl * pixelAngle * 0.5;
+    float eps = tl * lodPixelAngle * 0.5;
     float dy = surfaceDistance(p, tl);
     float r = dy * uStep;
     // Les intervalles sûrs autour de tPrev et de t ne se recouvrent plus (ou dy < 0) : le pas sur-relaxé
