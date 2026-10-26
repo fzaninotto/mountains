@@ -19,7 +19,7 @@ float march(vec3 ro, vec3 rd, float tmin, float tmax, float tOffset, float lodSc
   float epsPrev = 0.0;
   float omega = OMEGA;
   bool relaxed = false;
-  for (int i = 0; i < 400; i++) {
+  for (int i = 0; i < 700; i++) {
     if (i >= maxSteps) break;
     // Le dernier pas peut enjamber tmax (la surface de l'eau) : on teste encore le terrain exactement à tmax
     if (t > tmax) {

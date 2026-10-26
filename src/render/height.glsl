@@ -11,9 +11,10 @@ float snowSmoothing(float h, float slope) {
 }
 
 // Altitude du sol (m) en x, avec `octaves` octaves (fractionnaire : la dernière est fondue).
-// Renvoie aussi la pente (m/m) et la pente des grandes formes seules (wallSlope), qui varie lentement.
+// Renvoie aussi la pente (m/m), la pente des grandes formes seules (wallSlope), qui varie lentement, et devant une
+// falaise, sa distance horizontale (approchée), l'altitude de son sommet et la pente de sa face (cliffFront).
 // fBm à dérivées : la pente accumulée atténue les octaves suivantes, ce qui imite l'érosion.
-float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) {
+float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, out vec3 cliffFront) {
   vec3 c = climate(x);
   float level = c.x;
   float sand = duneWeight(level, c.y);
@@ -27,6 +28,8 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
   vec2 d = vec2(0.0);
   vec2 grad = vec2(0.0);
   wallSlope = -1.0;
+  // Altitude des grandes formes seules, figée en même temps que wallSlope
+  float coarseHeight;
 
   for (int i = 0; i < MAX_OCTAVES; i++) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
@@ -34,7 +37,10 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
     // Pour les octaves fines, la pente qui décide « roche ou versant érodé » est figée sur celle des grandes formes :
     // sinon le détail rend la pente plus raide, qui appelle plus de détail, et le terrain bascule en liserés nets
-    if (wallSlope < 0.0 && wavelength < WALL_DETAIL_WAVELENGTH) wallSlope = height * length(grad);
+    if (wallSlope < 0.0 && wavelength < WALL_DETAIL_WAVELENGTH) {
+      wallSlope = height * length(grad);
+      coarseHeight = base + height * a;
+    }
     float rockSlope = wavelength < WALL_DETAIL_WAVELENGTH ? wallSlope : height * length(grad);
     float steep = steepness(rockSlope);
 
@@ -63,20 +69,26 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
   }
 
   slope = height * grad;
-  if (wallSlope < 0.0) wallSlope = length(slope);
   float h = base + height * a;
-  // La face d'une falaise est une paroi : sa vraie pente compte pour la distance, et elle est creusée en 3D
-  vec3 cliff = cliffLift(x, h, c.z);
+  if (wallSlope < 0.0) {
+    wallSlope = length(slope);
+    coarseHeight = h;
+  }
+  // La face d'une falaise est une paroi : sa vraie pente compte pour la distance, et elle est creusée en 3D.
+  // Le gradient des grandes formes prend la direction de la pente complète, à peine différente près des côtes
+  vec2 coarseGrad = slope * (wallSlope / max(length(slope), 1e-6));
+  vec3 cliff = cliffLift(x, vec3(coarseHeight, coarseGrad), c.z, cliffFront);
   h += cliff.x;
-  slope *= 1.0 + cliff.y;
-  wallSlope = max(wallSlope, cliff.z * WALL_SLOPE[1]);
+  slope += cliff.yz;
+  wallSlope = max(wallSlope, length(cliff.yz));
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
 
 float terrain(vec2 x, float octaves) {
   vec2 slope;
   float wallSlope;
-  return terrainHeight(x, octaves, slope, wallSlope);
+  vec3 cliffFront;
+  return terrainHeight(x, octaves, slope, wallSlope, cliffFront);
 }
 
 // Niveau de détail : nombre d'octaves dont la longueur d'onde dépasse deux pixels à la distance t
@@ -91,7 +103,13 @@ float lod(float t) {
 float surfaceDistance(vec3 p, float t) {
   vec2 slope;
   float wallSlope;
-  float dy = p.y - terrainHeight(p.xz, lod(t), slope, wallSlope);
+  vec3 cliffFront;
+  float dy = p.y - terrainHeight(p.xz, lod(t), slope, wallSlope, cliffFront);
+  // Devant une falaise, le champ de hauteur ignore la paroi qui se dresse un peu plus loin : la distance est bornée
+  // par l'écart à son pied et au-dessus de son sommet, sans descendre sous l'écart vertical rapporté à sa pente.
+  // Ni sous un pixel : seul le vrai relief déclenche l'impact
+  float front = max(max(cliffFront.x, p.y - cliffFront.y), dy / (1.0 + cliffFront.z));
+  dy = min(dy, max(front, t * lodPixelAngle));
   float wall = smoothstep(WALL_SLOPE[0], WALL_SLOPE[1], wallSlope);
   if (wall <= 0.0) return dy;
   float e = mix(dy, dy / sqrt(1.0 + dot(slope, slope)), wall);

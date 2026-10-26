@@ -33,14 +33,17 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
   let j0: [number, number] = [1 / params.scale, 0];
   let j1: [number, number] = [0, 1 / params.scale];
   let a = 0, b = 1, dx = 0, dz = 0, gradX = 0, gradZ = 0, wavelength = params.scale;
-  // Pente des grandes formes (octaves de plus de WALL_DETAIL_WAVELENGTH), figée dès la première octave fine
-  let wallSlope = -1;
+  // Pente et altitude des grandes formes (octaves de plus de WALL_DETAIL_WAVELENGTH), figées dès la première octave fine
+  let wallSlope = -1, coarseHeight = 0;
 
   for (let i = 0; i < octaves; i++) {
     const [value, nx, nz] = noised(qx, qz, ox, oy);
     // Pour les octaves fines, la pente qui décide « roche ou versant érodé » est figée sur celle des grandes formes :
     // sinon le détail rend la pente plus raide, qui appelle plus de détail, et le terrain bascule en liserés nets
-    if (wallSlope < 0 && wavelength < WALL_DETAIL_WAVELENGTH) wallSlope = height * Math.hypot(gradX, gradZ);
+    if (wallSlope < 0 && wavelength < WALL_DETAIL_WAVELENGTH) {
+      wallSlope = height * Math.hypot(gradX, gradZ);
+      coarseHeight = base + height * a;
+    }
     const rockSlope = wavelength < WALL_DETAIL_WAVELENGTH ? wallSlope : height * Math.hypot(gradX, gradZ);
     const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], rockSlope);
 
@@ -79,5 +82,9 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
 
   const minWavelength = params.scale * 2 ** -octaves;
   const h = base + height * a;
-  return h + cliffLift(x, z, h, cliff) + sand * dunes(x, z, minWavelength);
+  if (wallSlope < 0) {
+    wallSlope = height * Math.hypot(gradX, gradZ);
+    coarseHeight = h;
+  }
+  return h + cliffLift(x, z, coarseHeight, wallSlope, cliff) + sand * dunes(x, z, minWavelength);
 }

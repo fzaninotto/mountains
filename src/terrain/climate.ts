@@ -1,6 +1,7 @@
 import { params } from '../params';
 import {
-  CLIFF_HEIGHT, CLIFF_HEIGHT_OCTAVE, CLIFF_JITTER, CLIFF_JITTER_OCTAVES, CLIFF_STEP, FIELD_OCTAVES, FIELDS, RANGE_WARP,
+  CLIFF_COVE_OCTAVE, CLIFF_HEIGHT, CLIFF_HEIGHT_OCTAVE, CLIFF_JITTER_OCTAVES, CLIFF_MIN_SLOPE, CLIFF_SETBACK, CLIFF_WIDTH,
+  FIELD_OCTAVES, FIELDS, RANGE_WARP,
 } from './constants';
 import { desertBias, mountainBias } from './biomes';
 import { noised, octaveNoise, rotate, seedOffset, smoothstep } from './noise';
@@ -55,20 +56,29 @@ export function duneWeight(level: number, desert: number): number {
 }
 
 /**
- * Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où le relief
- * traverse l'altitude du pied de falaise, sur quelques mètres de dénivelé seulement, donc très raide.
- * La hauteur varie le long de la côte, et le pied est plus ou moins haut au-dessus de l'eau, ce qui découpe criques
- * et caps au lieu de suivre fidèlement le trait de côte. Identique à cliffLift() dans src/render/climate.glsl.
+ * Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où les grandes formes du
+ * relief (altitude coarseHeight et pente coarseSlope, sans les octaves de moins de WALL_DETAIL_WAVELENGTH) traversent
+ * l'altitude du pied de falaise. Son dénivelé suit leur pente, pour que la face ait toujours la même largeur
+ * horizontale, CLIFF_WIDTH : une paroi, même sur un littoral en pente douce. Le petit détail, lui, ne fait que s'y
+ * ajouter : s'il décidait de la marche, ses quelques centimètres la feraient basculer en aiguilles.
+ * La hauteur varie le long de la côte et s'annule par endroits (criques basses), et le pied recule plus ou moins loin
+ * de l'eau, ce qui découpe criques et caps au lieu de suivre fidèlement le trait de côte.
+ * Identique à cliffLift() dans src/render/climate.glsl, qui calcule en plus le gradient du relèvement.
  */
-export function cliffLift(x: number, z: number, h: number, cliff: number): number {
+export function cliffLift(x: number, z: number, coarseHeight: number, coarseSlope: number, cliff: number): number {
+  const h = coarseHeight;
   // Sorties exactes, qui évitent les bruits : sous le pied le plus bas, pas de relèvement ; au-dessus de la plus
   // haute marche possible, le relèvement est complet
   const lowestFoot = params.water + 0.5;
   if (cliff <= 0 || h <= lowestFoot) return 0;
-  const height = CLIFF_HEIGHT * (0.3 + 0.9 * smoothstep(-0.5, 0.5, octaveNoise(x, z, CLIFF_HEIGHT_OCTAVE, [3.7, -1.3])));
-  if (h >= lowestFoot + CLIFF_JITTER + CLIFF_STEP) return cliff * height;
+  const height = CLIFF_HEIGHT * (0.2 + smoothstep(-0.5, 0.5, octaveNoise(x, z, CLIFF_HEIGHT_OCTAVE, [3.7, -1.3])))
+    * smoothstep(-0.6, 0.2, octaveNoise(x, z, CLIFF_COVE_OCTAVE, [-2.3, 5.9]));
+  // Les distances horizontales deviennent des dénivelés du terrain d'origine en les multipliant par sa pente
+  const slope = Math.max(coarseSlope, CLIFF_MIN_SLOPE);
+  const rise = CLIFF_WIDTH * slope;
+  if (h >= lowestFoot + (CLIFF_SETBACK + CLIFF_WIDTH) * slope) return cliff * height;
   const notches = 0.6 * octaveNoise(x, z, CLIFF_JITTER_OCTAVES[0], [-6.1, 2.9])
     + 0.4 * octaveNoise(x, z, CLIFF_JITTER_OCTAVES[1], [1.7, 8.3]);
-  const foot = lowestFoot + CLIFF_JITTER * (0.5 + 0.5 * notches);
-  return cliff * height * smoothstep(foot, foot + CLIFF_STEP, h);
+  const foot = lowestFoot + CLIFF_SETBACK * slope * (0.5 + 0.5 * notches);
+  return cliff * height * smoothstep(foot, foot + rise, h);
 }

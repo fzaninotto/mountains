@@ -28,14 +28,27 @@ export const FIELD_OCTAVES = 3;
 /** Ondulation des chaînes de montagnes par les champs continent et aridité, relative à leur échelle. */
 export const RANGE_WARP = 0.35;
 
-/** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,3 à 1,2 fois selon un bruit. */
+/** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,2 à 1,2 fois selon un bruit. */
 export const CLIFF_HEIGHT = 70;
-/** Dénivelé (m) sur lequel se forme la marche de la falaise : plus il est petit, plus la paroi est raide. */
-export const CLIFF_STEP = 3.5;
-/** Décalage (m, de 0 à cette valeur) de l'altitude du pied de falaise : découpe criques et caps. */
-export const CLIFF_JITTER = 6;
-/** Octaves du relief dont le bruit (décalé) module la hauteur des falaises, puis la position de leur pied. */
+/**
+ * Largeur horizontale (m) de la face de la falaise, quelle que soit la pente du littoral : la marche se forme sur
+ * un dénivelé du terrain d'origine de CLIFF_WIDTH × sa pente, ce qui donne une paroi quasi verticale.
+ */
+export const CLIFF_WIDTH = 6;
+/** Pente minimale prise en compte : sur un littoral presque plat, la face s'élargit plutôt que de devenir infinie. */
+export const CLIFF_MIN_SLOPE = 0.02;
+/**
+ * Recul horizontal (m, de 0 à cette valeur) du pied de falaise par rapport à la ligne où il est le plus bas : découpe
+ * criques et caps. Horizontal, et non vertical, pour que la face reste d'un seul tenant : sur un littoral en pente
+ * douce, un décalage de quelques mètres en altitude la déplacerait de centaines de mètres, en aiguilles isolées.
+ */
+export const CLIFF_SETBACK = 30;
+/**
+ * Octaves du relief dont le bruit (décalé) module la hauteur des falaises, les interrompt par des criques basses,
+ * puis fait reculer leur pied.
+ */
 export const CLIFF_HEIGHT_OCTAVE = 2;
+export const CLIFF_COVE_OCTAVE = 3;
 export const CLIFF_JITTER_OCTAVES = [5, 7];
 
 // ---------- Roche et érosion ----------
@@ -80,6 +93,7 @@ export const DUNE_CREST_WAVELENGTH = 600;
 
 const GLSL_INTS: Record<string, number> = {
   CLIFF_HEIGHT_OCTAVE,
+  CLIFF_COVE_OCTAVE,
   CLIFF_JITTER_OCTAVE_FINE: CLIFF_JITTER_OCTAVES[1],
   CLIFF_JITTER_OCTAVE: CLIFF_JITTER_OCTAVES[0],
   MAX_OCTAVES,
@@ -97,8 +111,9 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   FIELD_RATIO: FIELDS.map((field) => field.ratio),
   RANGE_WARP,
   CLIFF_HEIGHT,
-  CLIFF_STEP,
-  CLIFF_JITTER,
+  CLIFF_WIDTH,
+  CLIFF_MIN_SLOPE,
+  CLIFF_SETBACK,
   STEEP_SLOPE,
   ROCK_ROUGHNESS,
   RIDGE_WAVELENGTH,
