@@ -7,7 +7,11 @@ export const GROUND_OCTAVES = 16;
 const SNOW_SMOOTH_WAVELENGTH = 60;
 const SNOW_FLATTENING = 0.85;
 const STEEP_SLOPE = [0.35, 0.8];
-const ROCK_ROUGHNESS = 1.5;
+const ROCK_ROUGHNESS = 1.25;
+const RIDGE_WAVELENGTH = 400;
+const STRATA_THICKNESS = 30;
+const STRATA_TILT = 40;
+const STRATA_STRENGTH = 0.35;
 
 // Champs de biomes à très grande échelle : continent, aridité, chaînes de montagnes.
 // Chacun est un fBm de quelques octaves tournées, à une échelle relative à la taille des biomes
@@ -84,6 +88,19 @@ const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
+
+// Strates : sur les pentes raides, la roche se débite en corniches de STRATA_THICKNESS mètres,
+// légèrement inclinées ; effacées quand elles deviennent plus fines que quelques pixels
+function strata(h: number, steep: number, x: number, z: number, minWavelength: number): number {
+  const fade = steep * smoothstep(minWavelength, 4 * minWavelength, STRATA_THICKNESS);
+  if (fade <= 0) return 0;
+  const [ox, oy] = seedOffset();
+  const tilt = STRATA_TILT * noised(x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy)[0];
+  const layer = (h + tilt) / STRATA_THICKNESS;
+  const f = layer - Math.floor(layer);
+  const stepped = (Math.floor(layer) + f * f) * STRATA_THICKNESS - tilt;
+  return fade * STRATA_STRENGTH * (stepped - h);
+}
 
 function snowSmoothing(h: number, slope: number): number {
   return SNOW_FLATTENING * smoothstep(params.snow - 100, params.snow + 150, h) * (1 - smoothstep(0.35, 0.7, slope));
@@ -186,28 +203,35 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
   let j1: [number, number] = [0, 1 / params.scale];
   let a = 0, b = 1, dx = 0, dz = 0, gradX = 0, gradZ = 0, wavelength = params.scale;
   for (let i = 0; i < octaves; i++) {
-    const [v, nx, nz] = noised(qx, qz, ox, oy);
-    dx += nx;
-    dz += nz;
+    const [value, nx, nz] = noised(qx, qz, ox, oy);
+    const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], height * Math.hypot(gradX, gradZ));
+    // Sur les pentes raides, les petites octaves deviennent des crêtes vives : arêtes et ravines de roche cassée
+    const ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0;
+    const v = value + (1 - 2 * Math.abs(value) - value) * ridged;
+    const ridgeFactor = 1 + (-2 * Math.sign(value) - 1) * ridged;
+    const dvx = nx * ridgeFactor, dvz = nz * ridgeFactor;
+    dx += dvx;
+    dz += dvz;
     // L'atténuation par les dérivées imite l'érosion (vallées, versants doux) ; sur les pentes raides,
     // la roche reste à nu : on rend leur détail aux petites octaves, et un peu plus
     const erosion = 1 / (1 + dx * dx + dz * dz);
-    const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], height * Math.hypot(gradX, gradZ));
     let amplitude = b * (erosion + (ROCK_ROUGHNESS - erosion) * steep);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) {
       amplitude *= 1 - snowSmoothing(base + height * a, height * Math.hypot(gradX, gradZ));
     }
     a += amplitude * v;
-    gradX += amplitude * (j0[0] * nx + j0[1] * nz);
-    gradZ += amplitude * (j1[0] * nx + j1[1] * nz);
+    gradX += amplitude * (j0[0] * dvx + j0[1] * dvz);
+    gradZ += amplitude * (j1[0] * dvx + j1[1] * dvz);
     b *= gain;
     [qx, qz] = rotate(qx, qz);
     j0 = rotate(...j0);
     j1 = rotate(...j1);
     wavelength /= 2;
   }
-  const h = base + height * a;
-  return h + cliffLift(h, cliff) + sand * dunes(x, z, params.scale * 2 ** -octaves);
+  const minWavelength = params.scale * 2 ** -octaves;
+  const steep = smoothstep(STEEP_SLOPE[0], STEEP_SLOPE[1], height * Math.hypot(gradX, gradZ));
+  const h = base + height * a + strata(base + height * a, steep, x, z, minWavelength);
+  return h + cliffLift(h, cliff) + sand * dunes(x, z, minWavelength);
 }
 
 export interface NoiseOrigin {

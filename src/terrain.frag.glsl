@@ -34,12 +34,18 @@ out vec4 outColor;
 
 const mat2 M2 = mat2(0.8, -0.6, 0.6, 0.8);
 const float MATERIAL_SCALE = 350.0;
+const float ROCK_DETAIL_FACTOR[3] = float[3](8.0, 40.0, 175.0);
+const float ROCK_DETAIL_WEIGHT[3] = float[3](0.5, 0.3, 0.2);
 const float TMAX = 80000.0;
 // Identiques à noise.ts
 const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
 const vec2 STEEP_SLOPE = vec2(0.35, 0.8);
-const float ROCK_ROUGHNESS = 1.5;
+const float ROCK_ROUGHNESS = 1.25;
+const float RIDGE_WAVELENGTH = 400.0;
+const float STRATA_THICKNESS = 30.0;
+const float STRATA_TILT = 40.0;
+const float STRATA_STRENGTH = 0.35;
 const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
 const int FIELD_OCTAVES = 3;
 const float FIELD_RATIO[4] = float[4](1.0, 1.37, 0.55, 0.12);
@@ -80,6 +86,18 @@ vec3 noised(vec2 x, uvec2 cell) {
 
 float steepness(float slope) {
   return smoothstep(STEEP_SLOPE.x, STEEP_SLOPE.y, slope);
+}
+
+// Strates : sur les pentes raides, la roche se débite en corniches de STRATA_THICKNESS mètres,
+// légèrement inclinées ; effacées quand elles deviennent plus fines que quelques pixels
+float strata(float h, float steep, vec2 x, float minWavelength) {
+  float fade = steep * smoothstep(minWavelength, 4.0 * minWavelength, STRATA_THICKNESS);
+  if (fade <= 0.0) return 0.0;
+  float tilt = STRATA_TILT * noised(uMatFrac + x / MATERIAL_SCALE, uMatCell).x;
+  float layer = (h + tilt) / STRATA_THICKNESS;
+  float f = fract(layer);
+  float stepped = (floor(layer) + f * f) * STRATA_THICKNESS - tilt;
+  return fade * STRATA_STRENGTH * (stepped - h);
 }
 
 // La neige comble les petits reliefs sur les zones peu pentues au-dessus de la limite des neiges
@@ -183,20 +201,26 @@ float terrain(vec2 x, float octaves) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
     if (w <= 0.0) break;
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
-    d += n.yz;
+    float steep = steepness(height * length(grad));
+    // Sur les pentes raides, les petites octaves deviennent des crêtes vives : arêtes et ravines de roche cassée
+    float ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0.0;
+    float v = mix(n.x, 1.0 - 2.0 * abs(n.x), ridged);
+    vec2 dv = mix(n.yz, -2.0 * sign(n.x) * n.yz, ridged);
+    d += dv;
     // L'atténuation par les dérivées imite l'érosion (vallées, versants doux) ; sur les pentes raides,
     // la roche reste à nu : on rend leur détail aux petites octaves, et un peu plus
     float erosion = 1.0 / (1.0 + dot(d, d));
-    float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steepness(height * length(grad)));
+    float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steep);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(base + height * a, height * length(grad));
-    a += amplitude * n.x;
-    grad += amplitude * (transpose(jacobian) * n.yz);
+    a += amplitude * v;
+    grad += amplitude * (transpose(jacobian) * dv);
     b *= gain;
     q = 2.0 * (M2 * q);
     jacobian = 2.0 * (M2 * jacobian);
     wavelength *= 0.5;
   }
   float h = base + height * a;
+  h += strata(h, steepness(height * length(grad)), x, uScale * exp2(-octaves));
   h += cliffLift(h, c.z);
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
@@ -287,17 +311,32 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
   return mix(col, fogCol, amount);
 }
 
-vec3 terrainAlbedo(vec3 p, vec3 n) {
+// Détail de la roche sur trois échelles (~44 m, ~9 m, 2 m), dérivées du bruit de matériau par facteurs entiers ;
+// chaque échelle s'efface quand elle devient plus petite que quelques pixels
+float rockDetail(vec2 x, float footprint) {
+  float r = 0.0;
+  for (int i = 0; i < 3; i++) {
+    float k = ROCK_DETAIL_FACTOR[i];
+    float fade = smoothstep(2.0 * footprint, 4.0 * footprint, MATERIAL_SCALE / k);
+    r += fade * ROCK_DETAIL_WEIGHT[i] * noised(k * (uMatFrac + x / MATERIAL_SCALE), uint(k) * uMatCell).x;
+  }
+  return r;
+}
+
+vec3 terrainAlbedo(vec3 p, vec3 n, float t) {
   float variation = noised(uMatFrac + p.xz / MATERIAL_SCALE, uMatCell).x;
   vec3 c = climate(p.xz);
   float desert = c.y;
 
-  // Roche : grise en climat tempéré, ocre en climat aride
+  // Roche : grise en climat tempéré, ocre en climat aride, tachée à plusieurs échelles et rayée de bandes
+  float footprint = t * pixelAngle;
+  float bands = 0.5 + 0.5 * sin(p.y / 7.0 + variation * 3.0) * smoothstep(2.0 * footprint, 6.0 * footprint, 7.0);
   vec3 col = mix(
-    mix(vec3(0.13, 0.11, 0.09), vec3(0.27, 0.24, 0.21), 0.5 + 0.5 * variation),
+    mix(vec3(0.11, 0.105, 0.1), vec3(0.27, 0.26, 0.245), 0.5 + 0.5 * variation),
     mix(vec3(0.24, 0.13, 0.07), vec3(0.4, 0.24, 0.13), 0.5 + 0.5 * variation),
     desert
   );
+  col *= (0.8 + 0.4 * rockDetail(p.xz, footprint)) * (0.9 + 0.15 * bands);
 
   float vegetation = smoothstep(0.78, 0.92, n.y) * (1.0 - desert)
     * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
@@ -315,7 +354,7 @@ vec3 terrainAlbedo(vec3 p, vec3 n) {
 
 vec3 shadeTerrain(vec3 p, vec3 rd, float t) {
   vec3 n = calcNormal(p, t);
-  vec3 albedo = terrainAlbedo(p, n);
+  vec3 albedo = terrainAlbedo(p, n, t);
   float dif = max(dot(n, uSunDir), 0.0);
   float shadow = dif > 0.0 ? softShadow(p + n * max(0.05, t * pixelAngle * 2.0), uSunDir, t) : 0.0;
   float ambient = 0.5 + 0.5 * n.y;
