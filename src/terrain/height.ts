@@ -1,7 +1,7 @@
 import { params } from '../params';
 import {
-  RIDGE_WAVELENGTH, ROCK_ROUGHNESS, SNOW_FLATTENING, SNOW_SMOOTH_WAVELENGTH, STEEP_SLOPE, WALL_DETAIL_WAVELENGTH,
-  WALL_SLOPE,
+  RIDGE_SIGN_SOFTNESS, RIDGE_WAVELENGTH, ROCK_ROUGHNESS, SNOW_FLATTENING, SNOW_SMOOTH_WAVELENGTH, STEEP_SLOPE,
+  WALL_DETAIL_WAVELENGTH, WALL_SLOPE,
 } from './constants';
 import { biomeAt } from './biomes';
 import { cliffLift, climate, duneWeight } from './climate';
@@ -47,7 +47,10 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     // Sur les pentes raides, les petites octaves deviennent des crêtes vives : arêtes et ravines de roche cassée
     const ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0;
     const v = value + (1 - 2 * Math.abs(value) - value) * ridged;
-    const ridgeFactor = 1 + (-2 * Math.sign(value) - 1) * ridged;
+    // Signe adouci : avec Math.sign, la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de
+    // chaque arête, et le relief y ferait une marche
+    const ridgeSign = value / Math.sqrt(value * value + RIDGE_SIGN_SOFTNESS);
+    const ridgeFactor = 1 + (-2 * ridgeSign - 1) * ridged;
     const dvx = nx * ridgeFactor, dvz = nz * ridgeFactor;
     dx += dvx;
     dz += dvz;

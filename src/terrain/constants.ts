@@ -46,6 +46,11 @@ export const STEEP_SLOPE = [0.25, 0.6];
 export const ROCK_ROUGHNESS = 1.15;
 /** Sur la roche, les octaves plus fines que ceci (m) deviennent des crêtes vives. */
 export const RIDGE_WAVELENGTH = 120;
+/**
+ * Adoucissement du signe des crêtes : x / sqrt(x² + RIDGE_SIGN_SOFTNESS) plutôt que sign(x) (unités du bruit, au carré).
+ * Avec un signe vif, la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de chaque arête.
+ */
+export const RIDGE_SIGN_SOFTNESS = 0.01;
 /** Pentes entre lesquelles le terrain devient une paroi, détaillée en 3D plutôt que par le champ de hauteur. */
 export const WALL_SLOPE = [0.45, 0.9];
 /** Sur les parois, les octaves plus fines que ceci (m) sont retirées du champ de hauteur. */
@@ -97,6 +102,7 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   STEEP_SLOPE,
   ROCK_ROUGHNESS,
   RIDGE_WAVELENGTH,
+  RIDGE_SIGN_SOFTNESS,
   WALL_SLOPE,
   WALL_DETAIL_WAVELENGTH,
   SNOW_SMOOTH_WAVELENGTH,

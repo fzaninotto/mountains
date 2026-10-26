@@ -42,9 +42,8 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope) 
     float ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0.0;
     float v = mix(n.x, 1.0 - 2.0 * abs(n.x), ridged);
     // Signe adouci : avec sign(n.x), la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de
-    // chaque arête, et le relief y ferait une marche, vue comme un fil ou un arc net. La copie CPU garde sign(n.x) :
-    // les deux ne diffèrent qu'au voisinage immédiat de ces arêtes, de la hauteur de la marche
-    vec2 dv = mix(n.yz, -2.0 * (n.x / sqrt(n.x * n.x + 0.01)) * n.yz, ridged);
+    // chaque arête, et le relief y ferait une marche, vue comme un fil ou un arc net
+    vec2 dv = mix(n.yz, -2.0 * (n.x / sqrt(n.x * n.x + RIDGE_SIGN_SOFTNESS)) * n.yz, ridged);
     d += dv;
 
     // L'atténuation par les dérivées accumulées imite l'érosion (vallées, versants doux) ;
