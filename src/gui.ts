@@ -42,7 +42,8 @@ export function createGui(actions: Actions): GUI {
 
   const quality = gui.addFolder('Navigation et qualité');
   quality.add(params, 'speed', MIN_SPEED, MAX_SPEED, 1).name('Vitesse (m/s)').listen();
-  quality.add(params, 'movingScale', 0.05, 1, 0.05).name('Résolution en mouvement').onChange(viewChanged);
+  quality.add(params, 'targetFps', 10, 60, 1).name('Images/s visées en mouvement');
+  quality.add(params, 'movingScale', 0.05, 1, 0.05).name('Résolution max en mouvement').onChange(viewChanged);
   quality.add(params, 'pixelRatio', 0.5, 3, 0.25).name('Densité de pixels').onChange(viewChanged);
 
   const exp = gui.addFolder('Export');

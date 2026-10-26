@@ -14,6 +14,8 @@ interface Job {
 // Bras de mer entre falaises et île montagneuse, avec la graine par défaut
 const DEFAULT_START = { x: -277644, z: 133728, alt: 300, yaw: 3.6, pitch: -0.08 };
 const REFINE_DELAY = 150;
+const MIN_MOVING_SCALE = 0.05;
+const MOVING_SCALE_STEP = 0.01;
 const TELEPORT_RANGE = 500_000;
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
@@ -40,6 +42,10 @@ let dirty = true;
 let sharpDone = false;
 let changedAt = 0;
 let pixelBudget = 250_000;
+// Résolution de l'aperçu en mouvement, ajustée en continu pour tenir params.targetFps
+let movingScale = params.movingScale;
+let previewDrawn = false;
+let fps = 0;
 
 function invalidate() {
   dirty = true;
@@ -108,7 +114,7 @@ function saveExport(target: Target) {
 function status(): string {
   if (exportJob) return `Export ${Math.round((100 * exportJob.row) / exportJob.target.height)} %`;
   if (refineJob) return `Affinage ${Math.round((100 * refineJob.row) / refineJob.target.height)} %`;
-  return sharpDone ? 'Net' : 'Aperçu';
+  return sharpDone ? 'Net' : `Aperçu ${Math.round(movingScale * 100)} % · ${Math.round(fps)} img/s`;
 }
 
 function biomeName(level: number, desert: number): string {
@@ -142,10 +148,27 @@ function updateHud() {
   ].join(' · ') + '\n' + viewHash();
 }
 
+// Le coût d'un aperçu est proportionnel à son nombre de pixels, donc au carré de l'échelle :
+// on corrige l'échelle par la racine du rapport entre durée visée et durée mesurée
+function adaptMovingScale(frameTime: number) {
+  // Mesures aberrantes (images fusionnées, onglet en arrière-plan) : ignorées
+  if (frameTime <= 0.001 || frameTime > 0.5) return;
+  fps = fps ? fps * 0.8 + 0.2 / frameTime : 1 / frameTime;
+  const target = 1 / params.targetFps;
+  if (frameTime < target * 1.15 && frameTime > target * 0.8) return;
+  const factor = Math.min(1.1, Math.max(0.7, Math.sqrt(target / frameTime)));
+  const next = Math.round((movingScale * factor) / MOVING_SCALE_STEP) * MOVING_SCALE_STEP;
+  movingScale = Math.min(params.movingScale, Math.max(MIN_MOVING_SCALE, next));
+}
+
 let last = performance.now();
 function frame(now: number) {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const frameTime = (now - last) / 1000;
+  const dt = Math.min(0.1, frameTime);
   last = now;
+
+  if (previewDrawn) adaptMovingScale(frameTime);
+  previewDrawn = false;
 
   // Ajuste la quantité de pixels calculés par frame pour garder l'interface fluide
   if (refineJob || exportJob) {
@@ -163,14 +186,16 @@ function frame(now: number) {
       saveExport(target);
     }
   } else if (dirty) {
+    movingScale = Math.min(movingScale, params.movingScale);
     preview = renderer.ensureTarget(
       preview,
-      Math.max(1, Math.round(canvas.width * params.movingScale)),
-      Math.max(1, Math.round(canvas.height * params.movingScale)),
+      Math.max(1, Math.round(canvas.width * movingScale)),
+      Math.max(1, Math.round(canvas.height * movingScale)),
     );
     renderer.renderRows(preview, camera.view(), 0, preview.height);
     renderer.copy(preview, null);
     dirty = false;
+    previewDrawn = true;
   } else if (!sharpDone && preview) {
     if (!refineJob && now - changedAt > REFINE_DELAY) {
       sharp = renderer.ensureTarget(sharp, canvas.width, canvas.height);

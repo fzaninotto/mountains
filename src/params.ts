@@ -20,6 +20,7 @@ export interface Params {
   fov: number;
   speed: number;
   movingScale: number;
+  targetFps: number;
   pixelRatio: number;
   exportScale: number;
 }
@@ -43,7 +44,8 @@ export const params: Params = {
   exposure: 0.75,
   fov: 55,
   speed: 300,
-  movingScale: 0.2,
+  movingScale: 0.5,
+  targetFps: 30,
   pixelRatio: Math.min(window.devicePixelRatio, 2),
   exportScale: 2,
 };
