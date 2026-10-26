@@ -1,0 +1,40 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d1117;
+  font-family: system-ui, sans-serif;
+}
+
+#view {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: grab;
+  touch-action: none;
+}
+
+#view:active {
+  cursor: grabbing;
+}
+
+#hud, #help {
+  position: fixed;
+  left: 16px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+#hud {
+  top: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+#help {
+  bottom: 16px;
+  opacity: 0.8;
+}
