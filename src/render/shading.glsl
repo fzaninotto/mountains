@@ -154,7 +154,7 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
   // En aperçu, plus grossier encore et sans ombre portée
   bool preview = uPreview > 0.5;
   float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, preview ? 3.0 : 2.0, preview ? 120 : 200);
-  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, preview ? 0 : 24), p, r, tr) : sky(r);
+  vec3 reflection = tr > 0.0 ? applyFog(shadeTerrain(p + r * tr, t + tr, preview ? 0 : 24), p, r, tr, 0.0) : sky(r, 0.0);
   float shadow = preview ? 1.0 : softShadow(p, uSunDir, t, 16);
 
   // Reflet du soleil (GGX), d'autant plus diffus que l'eau est loin et que ses rides ne sont plus résolues

@@ -1,9 +1,10 @@
 import { params, type Params } from './params';
 import type { FlyCamera } from './camera';
-import type { Renderer } from './render/renderer';
+import { SMOOTHING_PASSES, subpixelJitter, type Renderer } from './render/renderer';
 
 // Mode #capture (développement seulement, voir vite.config.ts) : rend en pleine qualité chaque vue de
-// captures/views.json et enregistre les images dans captures/. Sert aux analyses visuelles automatisées.
+// captures/views.json, lissée comme l'image nette (moyenne de SMOOTHING_PASSES rendus décalés d'une fraction de
+// pixel), et enregistre les images dans captures/. Sert aux analyses visuelles automatisées.
 
 const WIDTH = 1280;
 const HEIGHT = 800;
@@ -41,6 +42,7 @@ async function toPng(pixels: Uint8Array): Promise<Blob> {
 export async function runCapture(renderer: Renderer, camera: FlyCamera, output: HTMLElement) {
   const views: CaptureView[] = await (await fetch('/__capture/views')).json();
   const target = renderer.ensureTarget(null, WIDTH, HEIGHT);
+  const pass = renderer.ensureTarget(null, WIDTH, HEIGHT);
   const defaults = { ...params };
   const saved: string[] = [];
 
@@ -53,10 +55,15 @@ export async function runCapture(renderer: Renderer, camera: FlyCamera, output: 
     camera.pitch = view.pitch;
     camera.placeAboveGround(view.alt);
     const cameraView = camera.view();
-    for (let row = 0; row < HEIGHT; row += ROWS_PER_PASS) {
-      renderer.renderRows(target, cameraView, row, Math.min(HEIGHT, row + ROWS_PER_PASS));
-      renderer.finish(target);
-      await nextFrame();
+    for (let k = 0; k < SMOOTHING_PASSES; k++) {
+      const destination = k === 0 ? target : pass;
+      for (let row = 0; row < HEIGHT; row += ROWS_PER_PASS) {
+        const end = Math.min(HEIGHT, row + ROWS_PER_PASS);
+        renderer.renderRows(destination, cameraView, row, end, WIDTH, HEIGHT, false, HEIGHT, subpixelJitter(k));
+        renderer.finish(destination);
+        await nextFrame();
+      }
+      if (k > 0) renderer.copy(pass, target, WIDTH, HEIGHT, 1 / (k + 1));
     }
     const response = await fetch(`/__capture/image?name=${view.name}`, {
       method: 'POST',

@@ -6,6 +6,12 @@ uniform vec2 uResolution;
 uniform float uCamY;
 uniform mat3 uCamRot;
 uniform float uFocal;
+// Décalage sous-pixel (px) des passes de lissage
+uniform vec2 uJitter;
+// Part visible du soleil depuis la caméra (relief, hauteur du soleil), voir src/camera.ts
+uniform float uSunVisible;
+// Relief qui cache le soleil : distance (m) et profondeur (m) du rayon vers le soleil sous son sommet, 0 sans relief
+uniform vec2 uSunShadow;
 
 // Réglages (voir src/params.ts)
 uniform vec3 uSunDir;

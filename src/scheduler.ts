@@ -1,13 +1,15 @@
 import { params } from './params';
 import type { FlyCamera, View } from './camera';
-import type { Renderer, Target } from './render/renderer';
+import { SMOOTHING_PASSES, subpixelJitter, type Renderer, type Target } from './render/renderer';
 
 // Ordonnancement des images. Le raymarching est trop coûteux pour calculer une image nette à chaque frame :
 // - en mouvement, on affiche un aperçu basse résolution, dont l'échelle s'adapte pour tenir params.targetFps ;
 // - à l'arrêt, l'image s'affine par niveaux de résolution, chacun deux fois plus fin que le précédent. Un niveau
 //   est calculé en coulisse, par bandes réparties sur plusieurs frames pour que l'interface reste fluide, et ne
 //   s'affiche qu'une fois complet : les pixels s'affinent sur toute l'image, sans balayage ;
-// - l'export calcule de même une image plus grande, puis la télécharge.
+// - la pleine résolution atteinte, SMOOTHING_PASSES - 1 rendus décalés d'une fraction de pixel sont calculés de
+//   même et moyennés avec l'image affichée : c'est l'antialiasing ;
+// - l'export calcule de même une image plus grande, lissée elle aussi, puis la télécharge.
 
 /** Délai après le dernier mouvement avant de commencer l'image nette (ms). */
 const REFINE_DELAY = 150;
@@ -28,6 +30,10 @@ interface Job {
   width: number;
   height: number;
   scale: number;
+  /** Hauteur d'image (px) qui fixe le niveau de détail, voir Renderer.renderRows. */
+  lodHeight: number;
+  /** Rang du rendu parmi les passes de lissage, 0 pour le premier, sans décalage. */
+  pass: number;
 }
 
 /** Image affichée à l'écran : coin width × height de target, à l'échelle scale. */
@@ -44,6 +50,8 @@ export class FrameScheduler {
   private readonly levels: [Target | null, Target | null] = [null, null];
   private shown: Shown | null = null;
   private exportTarget: Target | null = null;
+  /** Passe de lissage de l'export en cours de calcul, avant d'être moyennée dans exportTarget. */
+  private exportPass: Target | null = null;
   private refineJob: Job | null = null;
   private exportJob: Job | null = null;
   private dirty = true;
@@ -87,13 +95,22 @@ export class FrameScheduler {
       Math.floor(canvas.height * factor),
     );
     const { width, height } = this.exportTarget;
-    this.exportJob = { target: this.exportTarget, view: this.camera.view(), row: 0, width, height, scale: factor };
+    const view = this.camera.view();
+    this.exportJob = {
+      target: this.exportTarget, view, row: 0, width, height, scale: factor, lodHeight: height, pass: 0,
+    };
   }
 
   /** État affiché dans le HUD. */
   status(): string {
-    if (this.exportJob) return `Export ${Math.round((100 * this.exportJob.row) / this.exportJob.height)} %`;
-    if (this.refineJob) return `Affinage ${Math.round(this.refineJob.scale * 100)} %`;
+    const exportJob = this.exportJob;
+    if (exportJob) {
+      const done = (exportJob.pass * exportJob.height + exportJob.row) / (SMOOTHING_PASSES * exportJob.height);
+      return `Export ${Math.round(100 * done)} %`;
+    }
+    const job = this.refineJob;
+    if (job?.pass) return `Lissage ${job.pass + 1}/${SMOOTHING_PASSES}`;
+    if (job) return `Affinage ${Math.round(job.scale * 100)} %`;
     return this.sharpDone ? 'Net' : `Aperçu ${Math.round(this.movingScale * 100)} % · ${this.previewFps()} img/s`;
   }
 
@@ -109,9 +126,10 @@ export class FrameScheduler {
 
     if (this.exportJob) {
       if (this.advance(this.exportJob)) {
-        const target = this.exportJob.target;
-        this.exportJob = null;
-        this.saveExport(target);
+        const { width, height } = this.exportJob;
+        this.exportPass = this.renderer.ensureTarget(this.exportPass, width, height);
+        this.exportJob = this.nextPass(this.exportJob, this.exportTarget!, this.exportPass);
+        if (!this.exportJob) this.saveExport(this.exportTarget!);
       }
     } else if (this.dirty) {
       this.drawPreview(now);
@@ -161,28 +179,47 @@ export class FrameScheduler {
     }
     const job = this.refineJob!;
     if (!this.advance(job)) return;
-    this.show(job);
-    if (job.scale >= 1) {
-      this.refineJob = null;
-      this.sharpDone = true;
-      this.onSharp();
-    } else {
+    if (job.scale < 1) {
+      this.show(job);
       this.startLevel(job.view);
+      return;
     }
+    if (job.pass === 0) {
+      this.show(job);
+      this.onSharp();
+    }
+    const shown = this.shown!;
+    this.refineJob = this.nextPass(job, shown.target, this.spareLevel());
+    if (job.pass > 0) this.show(shown);
+    if (!this.refineJob) this.sharpDone = true;
+  }
+
+  /** Mélange une passe de lissage terminée à l'image accumulée ; renvoie la passe suivante, null après la dernière. */
+  private nextPass(job: Job, image: Target, spare: Target): Job | null {
+    if (job.pass > 0) this.renderer.copy(job.target, image, job.width, job.height, 1 / (job.pass + 1));
+    if (job.pass + 1 >= SMOOTHING_PASSES) return null;
+    return { ...job, target: spare, row: 0, pass: job.pass + 1 };
   }
 
   /** Prépare le niveau suivant, deux fois plus fin que l'image affichée, dans le tampon qui n'est pas à l'écran. */
   private startLevel(view: View) {
-    const { canvas, renderer } = this;
+    const { canvas } = this;
     // Au-delà de FULL_LEVEL, un niveau intermédiaire coûterait presque autant que l'image nette : on y va directement
     const doubled = this.shown!.scale * 2;
     const scale = doubled >= FULL_LEVEL ? 1 : doubled;
-    const slot = this.levels[0] && this.shown!.target === this.levels[0] ? 1 : 0;
-    const target = renderer.ensureTarget(this.levels[slot], canvas.width, canvas.height);
-    this.levels[slot] = target;
     const width = Math.max(1, Math.round(canvas.width * scale));
     const height = Math.max(1, Math.round(canvas.height * scale));
-    this.refineJob = { target, view, row: 0, width, height, scale };
+    // Les niveaux d'affinage gardent le niveau de détail de l'image finale : seule la finesse de l'échantillonnage change
+    const lodHeight = canvas.height;
+    this.refineJob = { target: this.spareLevel(), view, row: 0, width, height, scale, lodHeight, pass: 0 };
+  }
+
+  /** Celui des deux tampons d'affinage qui n'est pas à l'écran. */
+  private spareLevel(): Target {
+    const { canvas, renderer } = this;
+    const slot = this.levels[0] && this.shown!.target === this.levels[0] ? 1 : 0;
+    this.levels[slot] = renderer.ensureTarget(this.levels[slot], canvas.width, canvas.height);
+    return this.levels[slot];
   }
 
   /** Affiche une image, agrandie à la taille de l'écran. */
@@ -196,9 +233,8 @@ export class FrameScheduler {
     this.jobSubmitted = true;
     const rows = Math.max(1, Math.floor(this.pixelBudget / job.width));
     const end = Math.min(job.height, job.row + rows);
-    // Les niveaux d'affinage gardent le niveau de détail de l'image finale : seule la finesse de l'échantillonnage change
-    const lodHeight = job.target === this.exportTarget ? job.target.height : this.canvas.height;
-    this.renderer.renderRows(job.target, job.view, job.row, end, job.width, job.height, false, lodHeight);
+    const { target, view, width, height, lodHeight, pass } = job;
+    this.renderer.renderRows(target, view, job.row, end, width, height, false, lodHeight, subpixelJitter(pass));
     job.row = end;
     return end >= job.height;
   }

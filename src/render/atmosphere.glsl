@@ -46,8 +46,9 @@ vec3 sunColor(vec3 sunDir, float airScale) {
 }
 
 // Lumière diffusée vers l'œil le long du rayon (ro, rd) sur t mètres ; transmittance : part de la lumière du fond
-// qui traverse ce segment
-vec3 inScatter(vec3 ro, vec3 rd, float t, out vec3 transmittance) {
+// qui traverse ce segment. sunLit : part de l'air du segment éclairée par le soleil direct (la diffusion multiple
+// n'en dépend pas)
+vec3 inScatter(vec3 ro, vec3 rd, float t, float sunLit, out vec3 transmittance) {
   vec3 tauR = RAYLEIGH * opticalLength(ro.y, rd.y, t, RAYLEIGH_HEIGHT);
   vec3 tauA = vec3(uFog * opticalLength(ro.y, rd.y, t, AEROSOL_HEIGHT));
   transmittance = exp(-(tauR + tauA));
@@ -55,24 +56,46 @@ vec3 inScatter(vec3 ro, vec3 rd, float t, out vec3 transmittance) {
   float phaseR = 0.0596831 * (1.0 + mu * mu);
   float g2 = AEROSOL_G * AEROSOL_G;
   float phaseA = 0.0795775 * (1.0 - g2) / pow(1.0 + g2 - 2.0 * AEROSOL_G * mu, 1.5);
-  vec3 lightR = sunColAloft * (phaseR * SCATTER_INTENSITY + MULTIPLE_SCATTERING);
-  vec3 lightA = sunCol * (phaseA * SCATTER_INTENSITY + MULTIPLE_SCATTERING);
+  vec3 lightR = sunColAloft * (phaseR * SCATTER_INTENSITY * sunLit + MULTIPLE_SCATTERING);
+  vec3 lightA = sunCol * (phaseA * SCATTER_INTENSITY * sunLit + MULTIPLE_SCATTERING);
   vec3 tau = tauR + tauA;
   return (tauR * lightR + tauA * lightA) / max(tau, vec3(1e-9)) * (1.0 - transmittance);
 }
 
-vec3 sky(vec3 rd) {
+// Longueur (m) du rayon de la caméra qui reste dans l'ombre portée du relief cachant le soleil. Cette ombre est
+// bornée par le plan parallèle au soleil qui passe par le sommet du relief (voir uSunShadow) : un rayon qui monte
+// plus que le soleil en sort, un rayon qui monte moins y reste jusqu'au relief. Elle s'estompe sur les côtés
+float shadowedLength(vec3 rd) {
+  if (uSunShadow.y <= 0.0) return 0.0;
+  float lateral = smoothstep(0.5, 0.9, dot(normalize(rd.xz + 1e-6), normalize(uSunDir.xz + 1e-6)));
+  float rise = rd.y - uSunDir.y;
+  return lateral * (rise > 0.0 ? min(uSunShadow.x, uSunShadow.y / rise) : uSunShadow.x);
+}
+
+// inScatter() dont les shaded premiers mètres sont dans l'ombre du relief, éclairés à uSunVisible seulement
+vec3 scatter(vec3 ro, vec3 rd, float t, float shaded, out vec3 transmittance) {
+  if (shaded <= 0.0) return inScatter(ro, rd, t, 1.0, transmittance);
+  shaded = min(shaded, t);
+  vec3 nearTransmittance;
+  vec3 near = inScatter(ro, rd, shaded, uSunVisible, nearTransmittance);
+  vec3 far = inScatter(ro + rd * shaded, rd, t - shaded, 1.0, transmittance);
+  transmittance *= nearTransmittance;
+  return near + nearTransmittance * far;
+}
+
+// Ciel vu depuis la caméra ; shaded : voir scatter()
+vec3 sky(vec3 rd, float shaded) {
   vec3 transmittance;
-  vec3 col = inScatter(vec3(0.0, uCamY, 0.0), rd, 1e7, transmittance);
+  vec3 col = scatter(vec3(0.0, uCamY, 0.0), rd, 1e7, shaded, transmittance);
   // Disque solaire
   col += sunCol * 40.0 * smoothstep(0.99985, 0.99995, dot(rd, uSunDir));
   return col;
 }
 
-// Brume entre l'œil (ro) et un point à la distance t
-vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
+// Brume entre l'œil (ro) et un point à la distance t ; shaded : voir scatter()
+vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t, float shaded) {
   vec3 transmittance;
-  vec3 scattered = inScatter(ro, rd, t, transmittance);
+  vec3 scattered = scatter(ro, rd, t, shaded, transmittance);
   return col * transmittance + scattered;
 }
 
@@ -80,10 +103,10 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
 vec3 skyIrradiance() {
   vec3 side = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(1e-4, 0.0, 0.0));
   vec3 across = vec3(-side.z, 0.0, side.x);
-  vec3 sum = sky(vec3(0.0, 1.0, 0.0));
-  sum += sky(normalize(side + vec3(0.0, 0.35, 0.0)));
-  sum += sky(normalize(-side + vec3(0.0, 0.35, 0.0)));
-  sum += sky(normalize(across + vec3(0.0, 0.35, 0.0)));
-  sum += sky(normalize(-across + vec3(0.0, 0.35, 0.0)));
+  vec3 sum = sky(vec3(0.0, 1.0, 0.0), 0.0);
+  sum += sky(normalize(side + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += sky(normalize(-side + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += sky(normalize(across + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += sky(normalize(-across + vec3(0.0, 0.35, 0.0)), 0.0);
   return sum / 5.0 * 2.0;
 }

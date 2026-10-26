@@ -69,4 +69,5 @@ remplacé par des crêtes vives. Sur les parois, un champ de hauteur ne pourrait
 d'un bruit 3D qui creuse la surface (`surfaceDistance()`), et la couleur de la roche d'un bruit de gradient 3D.
 
 **Ordonnancement.** En mouvement, un aperçu basse résolution est recalculé à chaque image, avec une échelle ajustée
-pour tenir la cadence visée. À l'arrêt, l'image nette est calculée par bandes sur plusieurs images.
+pour tenir la cadence visée. À l'arrêt, l'image nette est calculée par bandes sur plusieurs images, puis lissée
+par la moyenne de six rendus décalés d'une fraction de pixel (antialiasing).

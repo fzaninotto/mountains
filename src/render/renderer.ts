@@ -41,11 +41,25 @@ const TERRAIN_SOURCE = [
 ].join('\n');
 
 const TERRAIN_UNIFORMS = [
-  'uResolution', 'uCamY', 'uCamRot', 'uFocal',
+  'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uJitter', 'uSunVisible', 'uSunShadow',
   'uSunDir', 'uScale', 'uBiomeScale', 'uMountainBias', 'uDesertBias', 'uDetail', 'uStep', 'uWater', 'uVegetation',
   'uSnow', 'uFog', 'uExposure', 'uPreview', 'uLodHeight', 'uBiomes', 'uMaxH',
   'uOctFrac', 'uOctCell', 'uFieldFrac', 'uFieldCell', 'uRockFrac', 'uRockCell', 'uRockRot', 'uDuneScale',
 ] as const;
+
+/** Nombre de rendus moyennés pour lisser une image nette (le premier sans décalage). */
+export const SMOOTHING_PASSES = 6;
+
+/** Décalage sous-pixel (px) du rendu n° pass : aucun pour le premier, puis suite de Halton (2, 3) centrée. */
+export function subpixelJitter(pass: number): [number, number] {
+  return pass === 0 ? [0, 0] : [halton(pass, 2) - 0.5, halton(pass, 3) - 0.5];
+}
+
+function halton(index: number, base: number): number {
+  let result = 0;
+  for (let f = 1 / base, i = index; i > 0; i = Math.floor(i / base), f /= base) result += f * (i % base);
+  return result;
+}
 
 type TerrainUniforms = Record<(typeof TERRAIN_UNIFORMS)[number], WebGLUniformLocation | null>;
 
@@ -109,6 +123,7 @@ export class Renderer {
    * lodHeight : hauteur d'image (px) qui fixe le niveau de détail du relief, la hauteur rendue par défaut. Elle
    * reste fixe en mouvement et entre les niveaux d'affinage, pour que la forme du relief ne change pas avec la
    * résolution de calcul.
+   * jitter : décalage sous-pixel (px) des passes de lissage.
    */
   renderRows(
     target: Target,
@@ -119,6 +134,7 @@ export class Renderer {
     height = target.height,
     preview = false,
     lodHeight = height,
+    jitter: readonly [number, number] = [0, 0],
   ) {
     const gl = this.gl;
     gl.useProgram(this.terrainProgram);
@@ -129,6 +145,7 @@ export class Renderer {
     this.setTerrainUniforms(view, width, height);
     gl.uniform1f(this.uniforms.uPreview, preview ? 1 : 0);
     gl.uniform1f(this.uniforms.uLodHeight, lodHeight);
+    gl.uniform2f(this.uniforms.uJitter, jitter[0], jitter[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
   }
@@ -136,9 +153,21 @@ export class Renderer {
   /**
    * Copie une cible vers une autre avec mise à l'échelle, ou vers l'écran si `destination` est null.
    * sourceWidth × sourceHeight : portion utilisée de la source.
+   * weight : part de la source mélangée à la destination (moyenne progressive des passes de lissage).
    */
-  copy(source: Target, destination: Target | null, sourceWidth = source.width, sourceHeight = source.height) {
+  copy(
+    source: Target,
+    destination: Target | null,
+    sourceWidth = source.width,
+    sourceHeight = source.height,
+    weight = 1,
+  ) {
     const gl = this.gl;
+    if (weight < 1) {
+      gl.enable(gl.BLEND);
+      gl.blendColor(0, 0, 0, weight);
+      gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA);
+    }
     gl.useProgram(this.blitProgram);
     gl.uniform2f(this.sourceScale, sourceWidth / source.width, sourceHeight / source.height);
     gl.bindFramebuffer(gl.FRAMEBUFFER, destination?.framebuffer ?? null);
@@ -146,6 +175,7 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, source.texture);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disable(gl.BLEND);
   }
 
   /**
@@ -201,6 +231,8 @@ export class Renderer {
     gl.uniform1f(u.uCamY, view.camY);
     gl.uniformMatrix3fv(u.uCamRot, false, view.rotation);
     gl.uniform1f(u.uFocal, view.focal);
+    gl.uniform1f(u.uSunVisible, view.sunVisible);
+    gl.uniform2fv(u.uSunShadow, view.sunShadow);
 
     // Réglages
     gl.uniform3fv(u.uSunDir, sunDirection());

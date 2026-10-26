@@ -1,5 +1,7 @@
-import { params } from './params';
+import { params, sunDirection } from './params';
+import { maxTerrainHeight } from './terrain/biomes';
 import { terrainHeight } from './terrain/height';
+import { smoothstep } from './terrain/noise';
 import { fieldOrigins, octaveOrigins, rockOrigins, type NoiseOrigin, type RockOrigin } from './terrain/origins';
 
 /** Tout ce dont le shader a besoin pour dessiner la vue courante. */
@@ -12,6 +14,13 @@ export interface View {
   octaves: NoiseOrigin;
   fields: NoiseOrigin;
   rock: RockOrigin;
+  /** Part visible du soleil depuis la caméra (0 à 1), qui règle l'éblouissement. */
+  sunVisible: number;
+  /**
+   * Relief qui cache le soleil : distance (m) et profondeur (m) sous son sommet du rayon de la caméra vers le
+   * soleil, [0, 0] si rien ne le cache. L'air en deçà est dans l'ombre et ne diffuse plus le soleil vers l'œil.
+   */
+  sunShadow: [number, number];
 }
 
 /** Hauteur minimale au-dessus du sol (m). */
@@ -19,6 +28,11 @@ const CLEARANCE = 2;
 const MAX_PITCH = 1.45;
 export const MIN_SPEED = 2;
 export const MAX_SPEED = 20000;
+/** Recherche du relief entre la caméra et le soleil : nombre de pas et distance du dernier (m). */
+const SUN_STEPS = 10;
+const SUN_RANGE = 50_000;
+/** Rayon apparent du soleil (rad) : le relief le masque progressivement sur cette marge. */
+const SUN_RADIUS = 0.01;
 
 /**
  * Caméra de vol libre : glisser pour regarder, ZQSD / WASD et flèches pour avancer, R / Espace et F pour monter
@@ -107,7 +121,31 @@ export class FlyCamera {
       octaves: octaveOrigins(this.x, this.z),
       fields: fieldOrigins(this.x, this.z),
       rock: rockOrigins(this.x, this.z),
+      ...this.sunOcclusion(),
     };
+  }
+
+  /**
+   * Relief entre la caméra et le soleil : il est sondé vers le soleil par pas croissants, le premier à la hauteur
+   * de la caméra au-dessus du sol, le dernier à SUN_RANGE.
+   */
+  private sunOcclusion(): Pick<View, 'sunVisible' | 'sunShadow'> {
+    const [sx, sy, sz] = sunDirection();
+    let visible = 1;
+    let shadowDistance = 0;
+    let shadowDepth = 0;
+    const first = Math.max(5, this.y - this.ground());
+    const growth = Math.max(1.2, (SUN_RANGE / first) ** (1 / (SUN_STEPS - 1)));
+    const ceiling = maxTerrainHeight();
+    for (let i = 0, d = first; i < SUN_STEPS; i++, d *= growth) {
+      const y = this.y + sy * d;
+      if (y > ceiling) break;
+      const ground = Math.max(terrainHeight(this.x + sx * d, this.z + sz * d), params.water);
+      visible = Math.min(visible, smoothstep(-SUN_RADIUS, SUN_RADIUS, (y - ground) / d));
+      if (ground - y > shadowDepth) [shadowDistance, shadowDepth] = [d, ground - y];
+    }
+    // Le soleil couché n'éblouit plus
+    return { sunVisible: visible * smoothstep(-0.02, 0.05, sy), sunShadow: [shadowDistance, shadowDepth] };
   }
 
   private forward(): [number, number, number] {
