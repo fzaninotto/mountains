@@ -98,13 +98,15 @@ vec3 scatter(vec3 ro, vec3 rd, float t, float shaded, out vec3 transmittance) {
   return near + nearTransmittance * far;
 }
 
-// Ciel vu depuis la caméra ; shaded : voir scatter()
-vec3 sky(vec3 rd, float shaded) {
+// Lumière diffusée par l'atmosphère vue depuis la caméra, sans le disque solaire ; shaded : voir scatter()
+vec3 skyScatter(vec3 rd, float shaded) {
   vec3 transmittance;
-  vec3 col = scatter(vec3(0.0, uCamY, 0.0), rd, 1e7, shaded, transmittance);
-  // Disque solaire
-  col += sunCol * 40.0 * smoothstep(0.99985, 0.99995, dot(rd, uSunDir));
-  return col;
+  return scatter(vec3(0.0, uCamY, 0.0), rd, 1e7, shaded, transmittance);
+}
+
+// Ciel vu depuis la caméra, disque solaire compris ; shaded : voir scatter()
+vec3 sky(vec3 rd, float shaded) {
+  return skyScatter(rd, shaded) + sunCol * 40.0 * smoothstep(0.99985, 0.99995, dot(rd, uSunDir));
 }
 
 // Brume entre l'œil (ro) et un point à la distance t ; shaded : voir scatter()
@@ -115,16 +117,17 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t, float shaded) {
 }
 
 // Éclairement moyen venu du ciel, pour la lumière ambiante : moyenne de quelques directions de l'hémisphère, avec
-// une diffusion isotrope des aérosols
+// une diffusion isotrope des aérosols. Le disque solaire en est exclu : le soleil direct est compté à part, et il
+// tomberait sinon dans l'une de ces directions (hauteur de 19° ou de 90°) et surexposerait toute l'image
 vec3 skyIrradiance() {
   aerosolG = 0.0;
   vec3 side = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(1e-4, 0.0, 0.0));
   vec3 across = vec3(-side.z, 0.0, side.x);
-  vec3 sum = sky(vec3(0.0, 1.0, 0.0), 0.0);
-  sum += sky(normalize(side + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += sky(normalize(-side + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += sky(normalize(across + vec3(0.0, 0.35, 0.0)), 0.0);
-  sum += sky(normalize(-across + vec3(0.0, 0.35, 0.0)), 0.0);
+  vec3 sum = skyScatter(vec3(0.0, 1.0, 0.0), 0.0);
+  sum += skyScatter(normalize(side + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += skyScatter(normalize(-side + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += skyScatter(normalize(across + vec3(0.0, 0.35, 0.0)), 0.0);
+  sum += skyScatter(normalize(-across + vec3(0.0, 0.35, 0.0)), 0.0);
   aerosolG = AEROSOL_G;
   return sum / 5.0 * 2.0;
 }
