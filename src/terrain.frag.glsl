@@ -10,8 +10,9 @@ uniform mat3 uCamRot;
 uniform float uFocal;
 uniform vec3 uSunDir;
 uniform float uScale;
-uniform float uHeight;
-uniform float uGain;
+uniform vec3 uBiomes[3];
+uniform float uBiomeScale;
+uniform float uMountainBias;
 uniform float uMaxH;
 uniform float uDetail;
 uniform float uStep;
@@ -24,6 +25,8 @@ uniform vec2 uOctFrac[MAX_OCT];
 uniform uvec2 uOctCell[MAX_OCT];
 uniform vec2 uMatFrac;
 uniform uvec2 uMatCell;
+uniform vec2 uBiomeFrac;
+uniform uvec2 uBiomeCell;
 
 out vec4 outColor;
 
@@ -69,8 +72,23 @@ float snowSmoothing(float h, float slope) {
   return SNOW_FLATTENING * smoothstep(uSnow - 100.0, uSnow + 150.0, h) * (1.0 - smoothstep(0.35, 0.7, slope));
 }
 
+// 0 = plaine, 0,5 = moyenne montagne, 1 = haute montagne. Champ continu à très grande échelle :
+// on passe toujours d'un biome au suivant progressivement, sans frontière
+float mountainness(vec2 x) {
+  vec2 q = uBiomeFrac + x / uBiomeScale;
+  float n = noised(q, uBiomeCell).x + 0.5 * noised(2.0 * q + vec2(0.37, 0.71), 2u * uBiomeCell).x;
+  return smoothstep(-0.45, 0.45, n / 1.5 + uMountainBias);
+}
+
+// Paramètres du biome (altitude de base, amplitude, gain) interpolés entre plaine, moyenne et haute montagne
+vec3 biomeAt(float m) {
+  return mix(mix(uBiomes[0], uBiomes[1], smoothstep(0.0, 0.5, m)), uBiomes[2], smoothstep(0.5, 1.0, m));
+}
+
 // fBm à dérivées : les pentes accumulées atténuent les octaves suivantes, ce qui imite l'érosion
 float terrain(vec2 x, float octaves) {
+  vec3 biome = biomeAt(mountainness(x));
+  float base = biome.x, height = biome.y, gain = biome.z;
   vec2 q = x / uScale;
   mat2 jacobian = mat2(1.0 / uScale);
   float a = 0.0, b = 1.0, wavelength = uScale;
@@ -82,15 +100,15 @@ float terrain(vec2 x, float octaves) {
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
     d += n.yz;
     float amplitude = w * b / (1.0 + dot(d, d));
-    if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(uHeight * a, uHeight * length(grad));
+    if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(base + height * a, height * length(grad));
     a += amplitude * n.x;
     grad += amplitude * (transpose(jacobian) * n.yz);
-    b *= uGain;
+    b *= gain;
     q = 2.0 * (M2 * q);
     jacobian = 2.0 * (M2 * jacobian);
     wavelength *= 0.5;
   }
-  return uHeight * a;
+  return base + height * a;
 }
 
 // Nombre d'octaves dont la longueur d'onde dépasse deux pixels à la distance t

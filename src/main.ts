@@ -3,6 +3,7 @@ import { params } from './params';
 import { FlyCamera, type View } from './camera';
 import { Renderer, type Target } from './renderer';
 import { createGui } from './gui';
+import { mountainness } from './noise';
 
 interface Job {
   target: Target;
@@ -99,9 +100,17 @@ function status(): string {
   return sharpDone ? 'Net' : 'Aperçu';
 }
 
+function biomeName(m: number): string {
+  if (m < 0.25) return 'Plaine';
+  if (m < 0.75) return 'Moyenne montagne';
+  return 'Haute montagne';
+}
+
 function updateHud() {
   const clearance = camera.y - camera.ground();
+  const m = mountainness(camera.x, camera.z);
   hud.textContent = [
+    `${biomeName(m)} (${Math.round(m * 100)} %)`,
     `Altitude ${Math.round(camera.y)} m`,
     `sol +${Math.round(clearance)} m`,
     `${Math.round(camera.speed())} m/s`,

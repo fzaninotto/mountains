@@ -1,7 +1,7 @@
 import vertexSource from './fullscreen.vert.glsl?raw';
 import terrainSource from './terrain.frag.glsl?raw';
 import blitSource from './blit.frag.glsl?raw';
-import { maxTerrainHeight, params, sunDirection } from './params';
+import { biomes, maxTerrainHeight, mountainBias, params, sunDirection } from './params';
 import type { View } from './camera';
 
 export interface Target {
@@ -12,8 +12,9 @@ export interface Target {
 }
 
 const TERRAIN_UNIFORMS = [
-  'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uHeight', 'uGain', 'uMaxH', 'uDetail',
-  'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell', 'uMatFrac', 'uMatCell',
+  'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uBiomes', 'uBiomeScale', 'uMountainBias',
+  'uMaxH', 'uDetail', 'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell',
+  'uMatFrac', 'uMatCell', 'uBiomeFrac', 'uBiomeCell',
 ] as const;
 
 type TerrainUniforms = Record<(typeof TERRAIN_UNIFORMS)[number], WebGLUniformLocation | null>;
@@ -74,8 +75,9 @@ export class Renderer {
     gl.uniform1f(u.uFocal, view.focal);
     gl.uniform3fv(u.uSunDir, sunDirection());
     gl.uniform1f(u.uScale, params.scale);
-    gl.uniform1f(u.uHeight, params.height);
-    gl.uniform1f(u.uGain, params.gain);
+    gl.uniform3fv(u.uBiomes, biomes().flatMap((b) => [b.base, b.amplitude, b.gain]));
+    gl.uniform1f(u.uBiomeScale, params.biomeScale);
+    gl.uniform1f(u.uMountainBias, mountainBias());
     gl.uniform1f(u.uMaxH, maxTerrainHeight());
     gl.uniform1f(u.uDetail, params.detail);
     gl.uniform1f(u.uStep, params.step);
@@ -88,6 +90,8 @@ export class Renderer {
     gl.uniform2uiv(u.uOctCell, view.octaves.cell);
     gl.uniform2fv(u.uMatFrac, view.material.frac);
     gl.uniform2uiv(u.uMatCell, view.material.cell);
+    gl.uniform2fv(u.uBiomeFrac, view.biome.frac);
+    gl.uniform2uiv(u.uBiomeCell, view.biome.cell);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);

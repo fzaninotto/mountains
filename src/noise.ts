@@ -1,4 +1,4 @@
-import { MAX_OCTAVES, params } from './params';
+import { biomes, MAX_OCTAVES, mountainBias, params, type Biome } from './params';
 
 // Réplique en double précision du bruit de terrain.frag.glsl : les deux doivent rester identiques
 
@@ -52,8 +52,28 @@ function snowSmoothing(h: number, slope: number): number {
   return SNOW_FLATTENING * smoothstep(params.snow - 100, params.snow + 150, h) * (1 - smoothstep(0.35, 0.7, slope));
 }
 
+// 0 = plaine, 0,5 = moyenne montagne, 1 = haute montagne. Champ continu à très grande échelle :
+// on passe toujours d'un biome au suivant progressivement, sans frontière
+export function mountainness(x: number, z: number): number {
+  const [ox, oy] = seedOffset();
+  const qx = x / params.biomeScale, qz = z / params.biomeScale;
+  const n = noised(qx, qz, ox, oy)[0] + 0.5 * noised(2 * qx + 0.37, 2 * qz + 0.71, 2 * ox, 2 * oy)[0];
+  return smoothstep(-0.45, 0.45, n / 1.5 + mountainBias());
+}
+
+export function biomeAt(m: number): Biome {
+  const [plain, hills, high] = biomes();
+  const mix = (a: Biome, b: Biome, t: number): Biome => ({
+    base: a.base + (b.base - a.base) * t,
+    amplitude: a.amplitude + (b.amplitude - a.amplitude) * t,
+    gain: a.gain + (b.gain - a.gain) * t,
+  });
+  return mix(mix(plain, hills, smoothstep(0, 0.5, m)), high, smoothstep(0.5, 1, m));
+}
+
 export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): number {
   const [ox, oy] = seedOffset();
+  const { base, amplitude: height, gain } = biomeAt(mountainness(x, z));
   let qx = x / params.scale, qz = z / params.scale;
   // Colonnes de la jacobienne dq/dx, pour connaître la vraie pente
   let j0: [number, number] = [1 / params.scale, 0];
@@ -65,18 +85,18 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     dz += nz;
     let amplitude = b / (1 + dx * dx + dz * dz);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) {
-      amplitude *= 1 - snowSmoothing(params.height * a, params.height * Math.hypot(gradX, gradZ));
+      amplitude *= 1 - snowSmoothing(base + height * a, height * Math.hypot(gradX, gradZ));
     }
     a += amplitude * v;
     gradX += amplitude * (j0[0] * nx + j0[1] * nz);
     gradZ += amplitude * (j1[0] * nx + j1[1] * nz);
-    b *= params.gain;
+    b *= gain;
     [qx, qz] = rotate(qx, qz);
     j0 = rotate(...j0);
     j1 = rotate(...j1);
     wavelength /= 2;
   }
-  return params.height * a;
+  return base + height * a;
 }
 
 export interface NoiseOrigin {
@@ -99,11 +119,12 @@ export function octaveOrigins(x: number, z: number): NoiseOrigin {
   return { frac, cell };
 }
 
-export function materialOrigin(x: number, z: number): NoiseOrigin {
+// Même principe pour un bruit à une seule échelle (matériau, biomes)
+export function gridOrigin(x: number, z: number, cellSize: number): NoiseOrigin {
   const [ox, oy] = seedOffset();
   const frac = new Float32Array(2);
   const cell = new Uint32Array(2);
-  setOrigin(frac, cell, 0, x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy);
+  setOrigin(frac, cell, 0, x / cellSize, z / cellSize, ox, oy);
   return { frac, cell };
 }
 
