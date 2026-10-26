@@ -10,7 +10,6 @@ export interface Params {
   water: number;
   vegetation: number;
   snow: number;
-  rockDensity: number;
   sunElevation: number;
   sunAzimuth: number;
   fog: number;
@@ -32,7 +31,6 @@ export const params: Params = {
   water: -700,
   vegetation: 400,
   snow: 1100,
-  rockDensity: 0.7,
   sunElevation: 12,
   sunAzimuth: 250,
   fog: 0.4,

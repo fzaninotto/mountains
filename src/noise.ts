@@ -3,7 +3,6 @@ import { MAX_OCTAVES, params } from './params';
 // Réplique en double précision du bruit de terrain.frag.glsl : les deux doivent rester identiques
 
 export const MATERIAL_SCALE = 350;
-export const ROCK_CELL = 16;
 export const GROUND_OCTAVES = 16;
 
 const TWO_32 = 4294967296;
@@ -77,12 +76,11 @@ export function octaveOrigins(x: number, z: number): NoiseOrigin {
   return { frac, cell };
 }
 
-// Même principe pour une grille régulière (bruit de matériau, cellules des pierres)
-export function gridOrigin(x: number, z: number, cellSize: number): NoiseOrigin {
+export function materialOrigin(x: number, z: number): NoiseOrigin {
   const [ox, oy] = seedOffset();
   const frac = new Float32Array(2);
   const cell = new Uint32Array(2);
-  setOrigin(frac, cell, 0, x / cellSize, z / cellSize, ox, oy);
+  setOrigin(frac, cell, 0, x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy);
   return { frac, cell };
 }
 

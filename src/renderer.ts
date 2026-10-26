@@ -13,8 +13,7 @@ export interface Target {
 
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uHeight', 'uGain', 'uMaxH', 'uDetail',
-  'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uRockDensity', 'uOctFrac', 'uOctCell',
-  'uMatFrac', 'uMatCell', 'uRockFrac', 'uRockCell',
+  'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell', 'uMatFrac', 'uMatCell',
 ] as const;
 
 type TerrainUniforms = Record<(typeof TERRAIN_UNIFORMS)[number], WebGLUniformLocation | null>;
@@ -85,13 +84,10 @@ export class Renderer {
     gl.uniform1f(u.uSnow, params.snow);
     gl.uniform1f(u.uFog, params.fog * 1e-4);
     gl.uniform1f(u.uExposure, params.exposure);
-    gl.uniform1f(u.uRockDensity, params.rockDensity);
     gl.uniform2fv(u.uOctFrac, view.octaves.frac);
     gl.uniform2uiv(u.uOctCell, view.octaves.cell);
     gl.uniform2fv(u.uMatFrac, view.material.frac);
     gl.uniform2uiv(u.uMatCell, view.material.cell);
-    gl.uniform2fv(u.uRockFrac, view.rocks.frac);
-    gl.uniform2uiv(u.uRockCell, view.rocks.cell);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);

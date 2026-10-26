@@ -1,5 +1,5 @@
 import { params } from './params';
-import { gridOrigin, MATERIAL_SCALE, octaveOrigins, ROCK_CELL, terrainHeight, type NoiseOrigin } from './noise';
+import { materialOrigin, octaveOrigins, terrainHeight, type NoiseOrigin } from './noise';
 
 export interface View {
   camY: number;
@@ -7,7 +7,6 @@ export interface View {
   focal: number;
   octaves: NoiseOrigin;
   material: NoiseOrigin;
-  rocks: NoiseOrigin;
 }
 
 const CLEARANCE = 2;
@@ -92,8 +91,7 @@ export class FlyCamera {
       rotation: new Float32Array([...r, ...u, ...f]),
       focal: 1 / Math.tan((params.fov * Math.PI) / 360),
       octaves: octaveOrigins(this.x, this.z),
-      material: gridOrigin(this.x, this.z, MATERIAL_SCALE),
-      rocks: gridOrigin(this.x, this.z, ROCK_CELL),
+      material: materialOrigin(this.x, this.z),
     };
   }
 
