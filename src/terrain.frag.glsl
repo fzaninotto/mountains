@@ -26,8 +26,8 @@ uniform vec2 uOctFrac[MAX_OCT];
 uniform uvec2 uOctCell[MAX_OCT];
 uniform vec2 uMatFrac;
 uniform uvec2 uMatCell;
-uniform vec2 uFieldFrac[9];
-uniform uvec2 uFieldCell[9];
+uniform vec2 uFieldFrac[12];
+uniform uvec2 uFieldCell[12];
 uniform uvec2 uDuneScale[4];
 
 out vec4 outColor;
@@ -40,7 +40,8 @@ const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
 const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
 const int FIELD_OCTAVES = 3;
-const float FIELD_RATIO[3] = float[3](1.0, 1.37, 0.55);
+const float FIELD_RATIO[4] = float[4](1.0, 1.37, 0.55, 0.12);
+const float CLIFF_HEIGHT = 70.0;
 const float RANGE_WARP = 0.35;
 const float DUNE_HEIGHT[2] = float[2](22.0, 4.0);
 const float DUNE_WARP = 250.0;
@@ -95,19 +96,30 @@ float fieldNoise(vec2 x, int field) {
   return a / norm;
 }
 
-// (niveau de relief, poids du désert).
+// (niveau de relief, poids du désert, poids des falaises).
 // Niveau de relief : 0 = mer, puis plage, plaine, collines, moyenne et haute montagne jusqu'à 1.
 // Le continent sépare la mer des terres ; les montagnes suivent les crêtes d'un troisième champ, ondulé
-// par les deux premiers, ce qui dessine des chaînes. Tout est continu : aucune frontière entre biomes
-vec2 climate(vec2 x) {
+// par les deux premiers, ce qui dessine des chaînes. Un quatrième champ, plus fin, fait émerger des îles
+// au large et décide où les côtes sont des falaises. Tout est continu : aucune frontière entre biomes
+vec3 climate(vec2 x) {
   float continent = fieldNoise(x, 0);
   float dryness = fieldNoise(x, 1);
   float warp = RANGE_WARP * uBiomeScale * FIELD_RATIO[2];
   float range = fieldNoise(x + warp * vec2(continent, dryness), 2);
+  float islands = fieldNoise(x, 3);
   float coast = smoothstep(-0.15, 0.05, continent);
   float inland = smoothstep(0.0, 0.25, continent);
   float mountain = smoothstep(0.62, 1.0, 1.0 - abs(range) + uMountainBias) * inland;
-  return vec2(0.3 * coast + 0.7 * mountain, smoothstep(0.05, 0.35, dryness + uDesertBias));
+  float island = smoothstep(0.15, 0.6, islands) * smoothstep(-0.6, -0.2, continent) * (1.0 - coast);
+  float level = 0.3 * coast + 0.7 * mountain + 0.6 * island;
+  float cliff = smoothstep(-0.05, 0.3, islands) * (1.0 - smoothstep(0.3, 0.42, level));
+  return vec3(level, smoothstep(0.05, 0.35, dryness + uDesertBias), cliff);
+}
+
+// Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où le relief
+// traverse le niveau de l'eau, sur quelques mètres de dénivelé seulement, donc très raide
+float cliffLift(float h, float cliff) {
+  return cliff * CLIFF_HEIGHT * smoothstep(uWater + 0.5, uWater + 4.0, h);
 }
 
 // Paramètres du biome (altitude de base, amplitude, gain) interpolés le long du niveau de relief
@@ -151,7 +163,7 @@ float dunes(vec2 x, float minWavelength) {
 
 // fBm à dérivées : les pentes accumulées atténuent les octaves suivantes, ce qui imite l'érosion
 float terrain(vec2 x, float octaves) {
-  vec2 c = climate(x);
+  vec3 c = climate(x);
   float level = c.x;
   float sand = duneWeight(level, c.y);
   vec3 biome = biomeAt(level);
@@ -176,6 +188,7 @@ float terrain(vec2 x, float octaves) {
     wavelength *= 0.5;
   }
   float h = base + height * a;
+  h += cliffLift(h, c.z);
   return sand > 0.0 ? h + sand * dunes(x, uScale * exp2(-octaves)) : h;
 }
 
@@ -267,7 +280,7 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 rd, float t) {
 
 vec3 terrainAlbedo(vec3 p, vec3 n) {
   float variation = noised(uMatFrac + p.xz / MATERIAL_SCALE, uMatCell).x;
-  vec2 c = climate(p.xz);
+  vec3 c = climate(p.xz);
   float desert = c.y;
 
   // Roche : grise en climat tempéré, ocre en climat aride
@@ -282,7 +295,7 @@ vec3 terrainAlbedo(vec3 p, vec3 n) {
   col = mix(col, mix(vec3(0.07, 0.10, 0.03), vec3(0.18, 0.20, 0.07), 0.5 + 0.5 * variation), vegetation);
 
   // Sable : sur les rivages en pente douce, et sur tout le plat en désert
-  float shore = 1.0 - smoothstep(uWater + 3.0, uWater + 10.0 + variation * 4.0, p.y);
+  float shore = 1.0 - smoothstep(uWater + 1.0, uWater + 3.5 + variation * 1.5, p.y);
   float sand = max(shore, desert * lowland(c.x)) * smoothstep(0.6, 0.85, n.y);
   col = mix(col, mix(vec3(0.42, 0.36, 0.25), vec3(0.5, 0.32, 0.16), desert), sand);
 

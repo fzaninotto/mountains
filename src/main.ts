@@ -11,6 +11,8 @@ interface Job {
   row: number;
 }
 
+// Bras de mer entre falaises et île montagneuse, avec la graine par défaut
+const DEFAULT_START = { x: -277644, z: 133728, alt: 300, yaw: 3.6, pitch: -0.08 };
 const REFINE_DELAY = 150;
 const TELEPORT_RANGE = 500_000;
 
@@ -19,11 +21,14 @@ const hud = document.querySelector<HTMLElement>('#hud')!;
 const renderer = new Renderer(canvas);
 const camera = new FlyCamera(canvas);
 
-// Position de départ optionnelle dans l'URL : #x=12000&z=-3400&alt=400
+// Point de départ, remplaçable dans l'URL : #x=12000&z=-3400&alt=400&yaw=1.2&pitch=-0.1
 const start = new URLSearchParams(window.location.hash.slice(1));
-camera.x = Number(start.get('x')) || 0;
-camera.z = Number(start.get('z')) || 0;
-camera.placeAboveGround(Number(start.get('alt')) || 400);
+const startValue = (key: keyof typeof DEFAULT_START) => (start.has(key) ? Number(start.get(key)) : DEFAULT_START[key]);
+camera.x = startValue('x');
+camera.z = startValue('z');
+camera.yaw = startValue('yaw');
+camera.pitch = startValue('pitch');
+camera.placeAboveGround(startValue('alt'));
 
 let preview: Target | null = null;
 let sharp: Target | null = null;
@@ -115,10 +120,15 @@ function biomeName(level: number, desert: number): string {
   return arid ? 'Haute montagne aride' : 'Haute montagne';
 }
 
+function here(): [number, number] {
+  const [level, desert] = climate(camera.x, camera.z);
+  return [level, desert];
+}
+
 function updateHud() {
   const clearance = camera.y - camera.ground();
   hud.textContent = [
-    biomeName(...climate(camera.x, camera.z)),
+    biomeName(...here()),
     `Altitude ${Math.round(camera.y)} m`,
     `sol +${Math.round(clearance)} m`,
     `${Math.round(camera.speed())} m/s`,

@@ -14,8 +14,10 @@ const FIELDS = [
   { ratio: 1, salt: 0 },
   { ratio: 1.37, salt: 7919 },
   { ratio: 0.55, salt: 104729 },
+  { ratio: 0.12, salt: 15485863 },
 ] as const;
 const RANGE_WARP = 0.35;
+export const CLIFF_HEIGHT = 70;
 
 // Dunes : crêtes d'un bruit étiré perpendiculairement au vent (axe x), ondulées par un second bruit.
 // Les fréquences sont des multiples entiers de celle des biomes, pour réutiliser son origine en double précision
@@ -99,19 +101,30 @@ function fieldNoise(x: number, z: number, field: number): number {
   return a / norm;
 }
 
-// Renvoie [niveau de relief, poids du désert].
+// Renvoie [niveau de relief, poids du désert, poids des falaises].
 // Niveau de relief : 0 = mer, puis plage, plaine, collines, moyenne et haute montagne jusqu'à 1.
 // Le continent sépare la mer des terres ; les montagnes suivent les crêtes d'un troisième champ, ondulé
-// par les deux premiers, ce qui dessine des chaînes. Tout est continu : aucune frontière entre biomes
-export function climate(x: number, z: number): [number, number] {
+// par les deux premiers, ce qui dessine des chaînes. Un quatrième champ, plus fin, fait émerger des îles
+// au large et décide où les côtes sont des falaises. Tout est continu : aucune frontière entre biomes
+export function climate(x: number, z: number): [number, number, number] {
   const continent = fieldNoise(x, z, 0);
   const dryness = fieldNoise(x, z, 1);
   const warp = RANGE_WARP * params.biomeScale * FIELDS[2].ratio;
   const range = fieldNoise(x + warp * continent, z + warp * dryness, 2);
+  const islands = fieldNoise(x, z, 3);
   const coast = smoothstep(-0.15, 0.05, continent);
   const inland = smoothstep(0, 0.25, continent);
   const mountain = smoothstep(0.62, 1, 1 - Math.abs(range) + mountainBias()) * inland;
-  return [0.3 * coast + 0.7 * mountain, smoothstep(0.05, 0.35, dryness + desertBias())];
+  const island = smoothstep(0.15, 0.6, islands) * smoothstep(-0.6, -0.2, continent) * (1 - coast);
+  const level = 0.3 * coast + 0.7 * mountain + 0.6 * island;
+  const cliff = smoothstep(-0.05, 0.3, islands) * (1 - smoothstep(0.3, 0.42, level));
+  return [level, smoothstep(0.05, 0.35, dryness + desertBias()), cliff];
+}
+
+// Falaises : tout ce qui émerge près de la mer est relevé d'un bloc ; la marche se forme là où le relief
+// traverse le niveau de l'eau, sur quelques mètres de dénivelé seulement, donc très raide
+export function cliffLift(h: number, cliff: number): number {
+  return cliff * CLIFF_HEIGHT * smoothstep(params.water + 0.5, params.water + 4, h);
 }
 
 export function biomeAt(level: number): Biome {
@@ -160,7 +173,7 @@ function dunes(x: number, z: number, minWavelength: number): number {
 
 export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): number {
   const [ox, oy] = seedOffset();
-  const [level, desert] = climate(x, z);
+  const [level, desert, cliff] = climate(x, z);
   const sand = duneWeight(level, desert);
   const biome = biomeAt(level);
   const { base, gain } = biome;
@@ -187,7 +200,8 @@ export function terrainHeight(x: number, z: number, octaves = GROUND_OCTAVES): n
     j1 = rotate(...j1);
     wavelength /= 2;
   }
-  return base + height * a + sand * dunes(x, z, params.scale * 2 ** -octaves);
+  const h = base + height * a;
+  return h + cliffLift(h, cliff) + sand * dunes(x, z, params.scale * 2 ** -octaves);
 }
 
 export interface NoiseOrigin {

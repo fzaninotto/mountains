@@ -64,8 +64,8 @@ export const BIOME_STOPS = [0, 0.2, 0.3, 0.45, 0.68, 1];
 
 export function biomes(): Biome[] {
   return [
-    { base: params.water - 150, amplitude: 80, gain: 0.4 },
-    { base: params.water + 4, amplitude: 10, gain: 0.4 },
+    { base: params.water - 150, amplitude: 120, gain: 0.45 },
+    { base: params.water + 4, amplitude: 30, gain: 0.45 },
     PLAIN,
     HILLS,
     MIDDLE_MOUNTAINS,
@@ -88,7 +88,7 @@ export function sunDirection(): [number, number, number] {
   return [Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), -Math.cos(elevation) * Math.cos(azimuth)];
 }
 
-// Borne haute du relief : base plus somme des amplitudes de toutes les octaves pour le biome le plus haut, plus les dunes
+// Borne haute du relief : base plus somme des amplitudes de toutes les octaves pour le biome le plus haut, plus les dunes et les falaises
 export function maxTerrainHeight(): number {
-  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 30;
+  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 100;
 }
