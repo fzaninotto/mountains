@@ -10,17 +10,25 @@ const SNOW_FLATTENING = 0.85;
 export const ARIDITY_SCALE_RATIO = 1.37;
 export const ARIDITY_SALT = 7919;
 
-export const DUNES = [
-  { dir: [0.8, 0.6], wavelength: 220, height: 18, warp: 1 },
-  { dir: [0.94, 0.34], wavelength: 45, height: 3, warp: 2 },
+// Dunes : crêtes d'un bruit étiré perpendiculairement au vent (axe x), ondulées par un second bruit.
+// Les fréquences sont des multiples entiers de celle des biomes, pour réutiliser son origine en double précision
+export const DUNE_LAYERS = [
+  { wavelength: 210, stretch: 4, height: 22 },
+  { wavelength: 50, stretch: 3, height: 4 },
 ] as const;
+const DUNE_WARP_WAVELENGTH = 1200;
+const DUNE_WARP = 250;
 
-// Phase de chaque train de dunes à la position de la caméra : le shader n'ajoute que la partie locale
-export function dunePhases(x: number, z: number): Float32Array {
-  return new Float32Array(DUNES.map((d) => {
-    const phase = (d.dir[0] * x + d.dir[1] * z) / d.wavelength;
-    return phase - Math.floor(phase);
-  }));
+// Facteurs entiers (x, z) : ondulation, puis chaque couche de dunes
+export function duneScales(): Uint32Array {
+  const factors = (wavelength: number, stretch: number) => {
+    const kx = Math.max(1, Math.round(params.biomeScale / wavelength));
+    return [kx, Math.max(1, Math.round(kx / stretch))];
+  };
+  return new Uint32Array([
+    ...factors(DUNE_WARP_WAVELENGTH, 1),
+    ...DUNE_LAYERS.flatMap((layer) => factors(layer.wavelength, layer.stretch)),
+  ]);
 }
 
 const TWO_32 = 4294967296;
@@ -98,29 +106,36 @@ export function biomeAt(level: number): Biome {
   return result;
 }
 
-// Les dunes n'existent que dans les zones arides basses : ni en mer, ni en montagne
+// Plaine, plage : en dessous, la montagne commence
+export function lowland(level: number): number {
+  return 1 - smoothstep(0.3, 0.45, level);
+}
+
+// Les dunes n'existent que dans les zones arides basses : ni en mer, ni en relief
 export function duneWeight(level: number, desert: number): number {
-  return desert * smoothstep(0.12, 0.2, level) * (1 - smoothstep(0.32, 0.6, level));
+  return desert * smoothstep(0.12, 0.2, level) * lowland(level);
 }
 
-// Profil asymétrique : pente douce au vent, versant raide sous le vent
-function duneProfile(phase: number): number {
-  const f = phase - Math.floor(phase);
-  return f < 0.75 ? smoothstep(0, 0.75, f) : 1 - smoothstep(0.75, 1, f);
-}
-
-// minWavelength : plus petite longueur d'onde affichable ; les trains de dunes plus fins s'effacent
+// minWavelength : plus petite longueur d'onde affichable ; les couches de dunes plus fines s'effacent
 function dunes(x: number, z: number, minWavelength: number): number {
   const [ox, oy] = seedOffset();
-  const warp = 0.9 * noised(x / MATERIAL_SCALE, z / MATERIAL_SCALE, ox, oy)[0];
+  const scales = duneScales();
+  const X = x / params.biomeScale, Z = z / params.biomeScale;
+  const [kwx, kwz] = scales;
+  const warpX = (DUNE_WARP / params.biomeScale) * noised(kwx * X + 1.3, kwz * Z + 7.1, kwx * ox, kwz * oy)[0];
+  const warpZ = (DUNE_WARP / params.biomeScale) * noised(kwx * X + 4.7, kwz * Z + 2.2, kwx * ox, kwz * oy)[0];
   // Hauteur des crêtes variable, sur le bruit des biomes 64 fois plus fin (~600 m)
-  const qx = (64 * x) / params.biomeScale + 5.3, qz = (64 * z) / params.biomeScale + 1.9;
-  const crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(qx, qz, 64 * ox, 64 * oy)[0]);
+  const crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(64 * X + 5.3, 64 * Z + 1.9, 64 * ox, 64 * oy)[0]);
   let h = 0;
-  for (const dune of DUNES) {
-    const phase = (dune.dir[0] * x + dune.dir[1] * z) / dune.wavelength + warp * dune.warp;
-    h += duneProfile(phase) * dune.height * smoothstep(minWavelength, 2 * minWavelength, dune.wavelength);
-  }
+  DUNE_LAYERS.forEach((layer, i) => {
+    const kx = scales[2 + 2 * i], kz = scales[3 + 2 * i];
+    const n = noised(kx * (X + warpX) + 3.1, kz * (Z + warpZ) + 8.3, kx * ox, kz * oy)[0];
+    const wavelength = params.biomeScale / kx;
+    // Arête arrondie, d'autant plus que la dune est petite à l'écran, pour éviter le crénelage des crêtes
+    const bevel = 0.04 + (0.5 * minWavelength) / wavelength;
+    const ridge = 1 - (Math.sqrt(n * n + bevel * bevel) - bevel);
+    h += Math.max(ridge, 0) ** 1.6 * layer.height * smoothstep(minWavelength, 2 * minWavelength, wavelength);
+  });
   return h * crest;
 }
 

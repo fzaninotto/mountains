@@ -10,7 +10,7 @@ uniform mat3 uCamRot;
 uniform float uFocal;
 uniform vec3 uSunDir;
 uniform float uScale;
-uniform vec3 uBiomes[5];
+uniform vec3 uBiomes[6];
 uniform float uBiomeScale;
 uniform float uMountainBias;
 uniform float uDesertBias;
@@ -30,7 +30,7 @@ uniform vec2 uBiomeFrac;
 uniform uvec2 uBiomeCell;
 uniform vec2 uAridFrac;
 uniform uvec2 uAridCell;
-uniform float uDunePhase[2];
+uniform uvec2 uDuneScale[3];
 
 out vec4 outColor;
 
@@ -40,12 +40,10 @@ const float TMAX = 80000.0;
 // Identiques à noise.ts
 const float SNOW_SMOOTH_WAVELENGTH = 60.0;
 const float SNOW_FLATTENING = 0.85;
-const float BIOME_STOPS[5] = float[5](0.0, 0.2, 0.32, 0.65, 1.0);
+const float BIOME_STOPS[6] = float[6](0.0, 0.2, 0.3, 0.45, 0.68, 1.0);
 const float ARIDITY_SCALE_RATIO = 1.37;
-const vec2 DUNE_DIR[2] = vec2[2](vec2(0.8, 0.6), vec2(0.94, 0.34));
-const float DUNE_WAVELENGTH[2] = float[2](220.0, 45.0);
-const float DUNE_HEIGHT[2] = float[2](18.0, 3.0);
-const float DUNE_WARP[2] = float[2](1.0, 2.0);
+const float DUNE_HEIGHT[2] = float[2](22.0, 4.0);
+const float DUNE_WARP = 250.0;
 
 float pixelAngle;
 vec3 sunCol;
@@ -100,31 +98,39 @@ float aridity(vec2 x) {
 // Paramètres du biome (altitude de base, amplitude, gain) interpolés le long du niveau de relief
 vec3 biomeAt(float level) {
   vec3 biome = uBiomes[0];
-  for (int i = 0; i < 4; i++) biome = mix(biome, uBiomes[i + 1], smoothstep(BIOME_STOPS[i], BIOME_STOPS[i + 1], level));
+  for (int i = 0; i < 5; i++) biome = mix(biome, uBiomes[i + 1], smoothstep(BIOME_STOPS[i], BIOME_STOPS[i + 1], level));
   return biome;
 }
 
-// Les dunes n'existent que dans les zones arides basses : ni en mer, ni en montagne
+// Plaine, plage : au-delà, le relief commence
+float lowland(float level) {
+  return 1.0 - smoothstep(0.3, 0.45, level);
+}
+
+// Les dunes n'existent que dans les zones arides basses : ni en mer, ni en relief
 float duneWeight(float level, float desert) {
-  return desert * smoothstep(0.12, 0.2, level) * (1.0 - smoothstep(0.32, 0.6, level));
+  return desert * smoothstep(0.12, 0.2, level) * lowland(level);
 }
 
-// Profil asymétrique : pente douce au vent, versant raide sous le vent
-float duneProfile(float phase) {
-  float f = fract(phase);
-  return f < 0.75 ? smoothstep(0.0, 0.75, f) : 1.0 - smoothstep(0.75, 1.0, f);
-}
-
-// Les trains de dunes plus fins que la plus petite longueur d'onde affichable s'effacent
+// Dunes : crêtes d'un bruit étiré perpendiculairement au vent (axe x), ondulées par un second bruit.
+// Les fréquences (uDuneScale) sont des multiples entiers de celle des biomes, ce qui permet de réutiliser
+// son origine en double précision. Les couches plus fines que la plus petite longueur d'onde affichable s'effacent
 float dunes(vec2 x, float minWavelength) {
-  float warp = 0.9 * noised(uMatFrac + x / MATERIAL_SCALE, uMatCell).x;
+  vec2 q = uBiomeFrac + x / uBiomeScale;
+  vec2 kw = vec2(uDuneScale[0]);
+  uvec2 cw = uDuneScale[0] * uBiomeCell;
+  vec2 warp = DUNE_WARP / uBiomeScale * vec2(noised(kw * q + vec2(1.3, 7.1), cw).x, noised(kw * q + vec2(4.7, 2.2), cw).x);
   // Hauteur des crêtes variable, sur le bruit des biomes 64 fois plus fin (~600 m)
-  vec2 q = 64.0 * (uBiomeFrac + x / uBiomeScale) + vec2(5.3, 1.9);
-  float crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(q, 64u * uBiomeCell).x);
+  float crest = 0.35 + 0.65 * smoothstep(-0.6, 0.6, noised(64.0 * q + vec2(5.3, 1.9), 64u * uBiomeCell).x);
   float h = 0.0;
   for (int i = 0; i < 2; i++) {
-    float phase = dot(x, DUNE_DIR[i]) / DUNE_WAVELENGTH[i] + uDunePhase[i] + warp * DUNE_WARP[i];
-    h += duneProfile(phase) * DUNE_HEIGHT[i] * smoothstep(minWavelength, 2.0 * minWavelength, DUNE_WAVELENGTH[i]);
+    vec2 k = vec2(uDuneScale[i + 1]);
+    float n = noised(k * (q + warp) + vec2(3.1, 8.3), uDuneScale[i + 1] * uBiomeCell).x;
+    float wavelength = uBiomeScale / k.x;
+    // Arête arrondie, d'autant plus que la dune est petite à l'écran, pour éviter le crénelage des crêtes
+    float bevel = 0.04 + 0.5 * minWavelength / wavelength;
+    float ridge = 1.0 - (sqrt(n * n + bevel * bevel) - bevel);
+    h += pow(max(ridge, 0.0), 1.6) * DUNE_HEIGHT[i] * smoothstep(minWavelength, 2.0 * minWavelength, wavelength);
   }
   return h * crest;
 }
@@ -261,7 +267,7 @@ vec3 terrainAlbedo(vec3 p, vec3 n) {
 
   // Sable : sur les rivages en pente douce, et sur tout le plat en désert
   float shore = 1.0 - smoothstep(uWater + 3.0, uWater + 10.0 + variation * 4.0, p.y);
-  float sand = max(shore, desert * (1.0 - smoothstep(0.32, 0.6, reliefLevel(p.xz)))) * smoothstep(0.6, 0.85, n.y);
+  float sand = max(shore, desert * lowland(reliefLevel(p.xz))) * smoothstep(0.6, 0.85, n.y);
   col = mix(col, mix(vec3(0.42, 0.36, 0.25), vec3(0.5, 0.32, 0.16), desert), sand);
 
   float snow = smoothstep(uSnow - 150.0, uSnow + 150.0, p.y + variation * 300.0)

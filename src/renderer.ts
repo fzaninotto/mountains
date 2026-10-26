@@ -3,6 +3,7 @@ import terrainSource from './terrain.frag.glsl?raw';
 import blitSource from './blit.frag.glsl?raw';
 import { biomes, desertBias, maxTerrainHeight, mountainBias, params, sunDirection } from './params';
 import type { View } from './camera';
+import { duneScales } from './noise';
 
 export interface Target {
   texture: WebGLTexture;
@@ -13,7 +14,7 @@ export interface Target {
 
 const TERRAIN_UNIFORMS = [
   'uResolution', 'uCamY', 'uCamRot', 'uFocal', 'uSunDir', 'uScale', 'uBiomes', 'uBiomeScale', 'uMountainBias',
-  'uDesertBias', 'uAridFrac', 'uAridCell', 'uDunePhase',
+  'uDesertBias', 'uAridFrac', 'uAridCell', 'uDuneScale',
   'uMaxH', 'uDetail', 'uStep', 'uWater', 'uVegetation', 'uSnow', 'uFog', 'uExposure', 'uOctFrac', 'uOctCell',
   'uMatFrac', 'uMatCell', 'uBiomeFrac', 'uBiomeCell',
 ] as const;
@@ -96,7 +97,7 @@ export class Renderer {
     gl.uniform2uiv(u.uBiomeCell, view.biome.cell);
     gl.uniform2fv(u.uAridFrac, view.aridity.frac);
     gl.uniform2uiv(u.uAridCell, view.aridity.cell);
-    gl.uniform1fv(u.uDunePhase, view.dunes);
+    gl.uniform2uiv(u.uDuneScale, duneScales());
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);

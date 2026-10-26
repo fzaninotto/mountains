@@ -106,11 +106,13 @@ function status(): string {
 }
 
 function biomeName(level: number, desert: number): string {
+  const arid = desert > 0.5;
   if (level < 0.12) return 'Mer';
-  if (level < 0.26) return desert > 0.5 ? 'Côte désertique' : 'Plage';
-  if (level < 0.45) return desert > 0.5 ? 'Désert' : 'Plaine';
-  if (level < 0.8) return desert > 0.5 ? 'Collines arides' : 'Moyenne montagne';
-  return desert > 0.5 ? 'Montagne aride' : 'Haute montagne';
+  if (level < 0.25) return arid ? 'Côte désertique' : 'Plage';
+  if (level < 0.375) return arid ? 'Désert' : 'Plaine';
+  if (level < 0.565) return arid ? 'Collines arides' : 'Collines';
+  if (level < 0.84) return arid ? 'Moyenne montagne aride' : 'Moyenne montagne';
+  return arid ? 'Haute montagne aride' : 'Haute montagne';
 }
 
 function updateHud() {
