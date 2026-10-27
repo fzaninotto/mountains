@@ -37,5 +37,7 @@ function captureSink(): Plugin {
 }
 
 export default defineConfig({
+  // Chemins relatifs : la page est servie sous /mountains/ sur GitHub Pages
+  base: './',
   plugins: [captureSink()],
 });
