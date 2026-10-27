@@ -1,4 +1,5 @@
 import { params } from '../params';
+import { GRADIENT_NOISE_SCALE, RIDGE_MASSIF } from './constants';
 
 /** Un biome règle le relief : altitude de base (m), amplitude du fBm (m) et rugosité (gain entre octaves). */
 export interface Biome {
@@ -36,7 +37,11 @@ export function desertBias(): number {
   return (params.desertCoverage - 0.5) * 1.2;
 }
 
-/** Borne haute du relief : base plus somme des amplitudes de toutes les octaves du biome le plus haut, plus dunes et falaises. */
+/**
+ * Borne haute du relief : base plus somme des amplitudes de toutes les octaves du biome le plus haut, plus dunes et
+ * falaises. En haute montagne, la première octave est un bruit de gradient relevé de RIDGE_MASSIF.
+ */
 export function maxTerrainHeight(): number {
-  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 100;
+  const first = Math.max(1, RIDGE_MASSIF * GRADIENT_NOISE_SCALE * Math.SQRT1_2);
+  return Math.max(...biomes().map((b) => b.base + b.amplitude * (first + b.gain / (1 - b.gain)))) + 100;
 }

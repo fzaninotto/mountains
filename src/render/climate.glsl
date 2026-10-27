@@ -26,7 +26,10 @@ vec3 climate(vec2 x) {
   float islands = fieldNoise(x, 3);
   float coast = smoothstep(-0.15, 0.05, continent);
   float inland = smoothstep(0.0, 0.25, continent);
-  float mountain = smoothstep(0.62, 1.0, 1.0 - abs(range) + uMountainBias) * inland;
+  // Des collines et contreforts larges, puis la montagne : pas de mur posé sur la plaine
+  float crest = 1.0 - abs(range) + uMountainBias;
+  float mountain = (RANGE_FOOTHILL_LEVEL * smoothstep(RANGE_FOOTHILLS[0], RANGE_FOOTHILLS[1], crest)
+    + (1.0 - RANGE_FOOTHILL_LEVEL) * smoothstep(RANGE_SUMMITS[0], RANGE_SUMMITS[1], crest)) * inland;
   float island = smoothstep(0.15, 0.6, islands) * smoothstep(-0.6, -0.2, continent) * (1.0 - coast);
   float level = 0.3 * coast + 0.7 * mountain + 0.6 * island;
   float cliff = smoothstep(-0.05, 0.3, islands) * (1.0 - smoothstep(0.3, 0.42, level));
@@ -45,6 +48,12 @@ vec3 biomeAt(float level) {
 // 1 en plaine et sur la plage, 0 dès les collines
 float lowland(float level) {
   return 1.0 - smoothstep(0.3, 0.45, level);
+}
+
+// 1 au pied des reliefs (glacis et piémonts), 0 en plaine et en montagne
+float piedmont(float level) {
+  return smoothstep(PIEDMONT_LEVEL[0], PIEDMONT_LEVEL[1], level)
+    * (1.0 - smoothstep(PIEDMONT_LEVEL[2], PIEDMONT_LEVEL[3], level));
 }
 
 // 1 sur les côtes marines (plages, écume), 0 au bord des lacs et des rivières des terres

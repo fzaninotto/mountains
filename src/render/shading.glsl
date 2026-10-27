@@ -309,6 +309,10 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
     micro = mix(micro, tufts.yz, vegetation);
   }
 
+  // Glacis : au pied des reliefs arides, au-dessus des dunes, cailloutis clair sur les pentes douces
+  float glacis = desert * piedmont(c.x) * (1.0 - lowland(c.x)) * smoothstep(0.88, 0.96, s.coarse.y);
+  col = mix(col, vec3(0.6, 0.47, 0.32) * (0.9 + 0.2 * flatVariation), glacis);
+
   // Sable : plages des côtes marines (pas des lacs), de largeur variable, et tout le plat en désert
   float coastal = seaCoast(c.x);
   float beachTop = uWater + 1.0 + 3.5 * (0.5 + 0.5 * flatVariation);

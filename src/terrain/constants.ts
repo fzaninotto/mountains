@@ -27,6 +27,24 @@ export const FIELD_OCTAVES = 3;
 
 /** Ondulation des chaînes de montagnes par les champs continent et aridité, relative à leur échelle. */
 export const RANGE_WARP = 0.35;
+/**
+ * Profil d'une chaîne en travers, selon la proximité de sa ligne de crête (1 - |champ des chaînes|) : la plaine monte
+ * en collines et contreforts entre RANGE_FOOTHILLS[0] et [1] (jusqu'au niveau RANGE_FOOTHILL_LEVEL de la montagne),
+ * puis en montagne entre RANGE_SUMMITS[0] et [1].
+ */
+export const RANGE_FOOTHILLS = [0.42, 0.7];
+export const RANGE_FOOTHILL_LEVEL = 0.21;
+export const RANGE_SUMMITS = [0.66, 1];
+
+/**
+ * Piémont : entre ces niveaux de relief (montée, puis descente), au pied des reliefs, les creux des grandes formes
+ * (octaves de plus de PIEDMONT_WAVELENGTH m) sont comblés jusqu'à PIEDMONT_FLOOR (unités du fBm) : un glacis en pente
+ * douce vers la plaine, d'où émergent les contreforts. Comblement relatif, en climat tempéré puis aride.
+ */
+export const PIEDMONT_LEVEL = [0.3, 0.4, 0.55, 0.72];
+export const PIEDMONT_WAVELENGTH = 500;
+export const PIEDMONT_FLOOR = -0.1;
+export const PIEDMONT_FILL = [0.6, 1];
 
 /** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,2 à 1,2 fois selon un bruit. */
 export const CLIFF_HEIGHT = 70;
@@ -64,6 +82,46 @@ export const RIDGE_WAVELENGTH = 120;
  * Avec un signe vif, la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de chaque arête.
  */
 export const RIDGE_SIGN_SOFTNESS = 0.01;
+/**
+ * Haute montagne : entre ces niveaux de relief, les octaves de RIDGE_BAND[0] à RIDGE_BAND[1] m deviennent un
+ * multifractal à crêtes (arêtes continues, cols, cirques), sur un domaine déformé de RIDGE_WARP m au plus par
+ * l'octave RIDGE_WARP_OCTAVE.
+ */
+export const ALPINE_LEVEL = [0.65, 0.85];
+export const RIDGE_BAND = [190, 3000];
+export const RIDGE_WARP = 400;
+export const RIDGE_WARP_OCTAVE = 0;
+/**
+ * Arrondi des arêtes des grandes octaves (unités du bruit, au carré), et amplitude des crêtes de RIDGE_BAND[1] m,
+ * proportionnelle à la longueur d'onde pour les plus petites.
+ */
+export const RIDGE_CREST_SOFTNESS = 0.003;
+export const RIDGE_AMPLITUDE = 0.8;
+/**
+ * Profondeur des vallées entre les crêtes, rapportée à |n| : le bruit de gradient reste le plus souvent près de zéro,
+ * des crêtes 1 - 2|n| laisseraient des vallées peu creusées sous des sommets peu élevés.
+ */
+export const RIDGE_DEPTH = 2.5;
+/**
+ * Les octaves à crêtes s'effacent loin des arêtes de la précédente, entre ces valeurs de son 1 - |n| : cirques et
+ * fonds de vallée restent lisses.
+ */
+export const RIDGE_WEIGHT = [0.4, 0.85];
+/**
+ * Les crêtes naissent entre ces altitudes (m) des grandes formes (octaves plus larges que RIDGE_BAND[1]) : en dessous,
+ * versants et fonds de vallée gardent le fBm ordinaire ; au-dessus, arêtes et cirques.
+ */
+export const RIDGE_BASE = [900, 1900];
+/**
+ * Amplitude relative des grandes formes plus larges que RIDGE_BAND[1] en haute montagne, en bruit de gradient : les
+ * crêtes repliées varient moins que le fBm qu'elles remplacent, et les sommets garderaient sinon une altitude moindre.
+ */
+export const RIDGE_MASSIF = 1.35;
+/**
+ * Facteur du bruit de gradient 2D (gradients unitaires), qui le rapproche de l'étendue du value noise. Sa valeur
+ * absolue reste sous GRADIENT_NOISE_SCALE / √2, atteint quand les quatre gradients visent le centre d'une cellule.
+ */
+export const GRADIENT_NOISE_SCALE = 1.4;
 /** Pentes entre lesquelles le terrain devient une paroi, détaillée en 3D plutôt que par le champ de hauteur. */
 export const WALL_SLOPE = [0.45, 0.9];
 /** Sur les parois, les octaves plus fines que ceci (m) sont retirées du champ de hauteur. */
@@ -139,6 +197,7 @@ const GLSL_INTS: Record<string, number> = {
   CLIFF_JITTER_OCTAVE_FINE: CLIFF_JITTER_OCTAVES[1],
   CLIFF_JITTER_OCTAVE: CLIFF_JITTER_OCTAVES[0],
   MAX_OCTAVES,
+  RIDGE_WARP_OCTAVE,
   BIOME_COUNT: BIOME_STOPS.length,
   FIELD_COUNT: FIELDS.length,
   FIELD_OCTAVES,
@@ -152,6 +211,23 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   BIOME_STOPS,
   FIELD_RATIO: FIELDS.map((field) => field.ratio),
   RANGE_WARP,
+  RANGE_FOOTHILLS,
+  RANGE_FOOTHILL_LEVEL,
+  RANGE_SUMMITS,
+  PIEDMONT_LEVEL,
+  PIEDMONT_WAVELENGTH,
+  PIEDMONT_FLOOR,
+  PIEDMONT_FILL,
+  ALPINE_LEVEL,
+  RIDGE_BAND,
+  RIDGE_WARP,
+  RIDGE_CREST_SOFTNESS,
+  RIDGE_AMPLITUDE,
+  RIDGE_DEPTH,
+  RIDGE_WEIGHT,
+  RIDGE_BASE,
+  RIDGE_MASSIF,
+  GRADIENT_NOISE_SCALE,
   CLIFF_HEIGHT,
   CLIFF_WIDTH,
   CLIFF_MIN_SLOPE,
