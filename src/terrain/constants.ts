@@ -27,17 +27,6 @@ export const FIELD_OCTAVES = 3;
 
 /** Ondulation des chaînes de montagnes par les champs continent et aridité, relative à leur échelle. */
 export const RANGE_WARP = 0.35;
-/**
- * Profil d'une chaîne en travers, selon la proximité de sa ligne de crête (1 - |champ des chaînes|) : la plaine monte
- * en collines et contreforts entre RANGE_FOOTHILLS[0] et [1] (jusqu'au niveau RANGE_FOOTHILL_LEVEL de la montagne),
- * puis en montagne entre RANGE_SUMMITS[0] et [1].
- */
-export const RANGE_FOOTHILLS = [0.42, 0.7];
-export const RANGE_FOOTHILL_LEVEL = 0.21;
-export const RANGE_SUMMITS = [0.62, 0.95];
-
-/** Piémont (glacis clair en climat aride, voir shading.glsl) : entre ces niveaux de relief, montée puis descente. */
-export const PIEDMONT_LEVEL = [0.3, 0.4, 0.55, 0.72];
 
 /** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,2 à 1,2 fois selon un bruit. */
 export const CLIFF_HEIGHT = 70;
@@ -75,54 +64,6 @@ export const RIDGE_WAVELENGTH = 120;
  * Avec un signe vif, la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de chaque arête.
  */
 export const RIDGE_SIGN_SOFTNESS = 0.01;
-/**
- * Haute montagne : entre ces niveaux de relief, les octaves de RIDGE_BAND[0] à RIDGE_BAND[1] m deviennent un
- * multifractal à crêtes (arêtes continues, cols, cirques), sur un domaine déplacé de RIDGE_WARP m par unité de pente
- * (dans l'espace du bruit) de la première octave, soit quelques centaines de mètres.
- */
-export const ALPINE_LEVEL = [0.58, 0.68];
-export const RIDGE_BAND = [1400, 3000];
-export const RIDGE_WARP = 300;
-/**
- * Arrondi des arêtes des grandes octaves (unités du bruit, au carré), et amplitude des crêtes de RIDGE_BAND[1] m,
- * proportionnelle à la longueur d'onde pour les plus petites.
- */
-export const RIDGE_CREST_SOFTNESS = 0.003;
-/** Valeur du bruit de gradient autour de laquelle il est replié en crêtes (voir alpineRidges). */
-export const RIDGE_OFFSET = 0.3;
-export const RIDGE_AMPLITUDE = 0.8;
-/**
- * Profondeur des vallées entre les crêtes, rapportée à |n| : le bruit de gradient reste le plus souvent près de zéro,
- * des crêtes 1 - 2|n| laisseraient des vallées peu creusées sous des sommets peu élevés.
- */
-export const RIDGE_DEPTH = 2;
-/**
- * Les octaves à crêtes s'effacent loin des arêtes de la précédente, entre ces valeurs de son 1 - |n| : cirques et
- * fonds de vallée restent lisses.
- */
-export const RIDGE_WEIGHT = [0.15, 0.7];
-/**
- * Sous les crêtes, le détail plus fin garde au moins cette part de son amplitude loin des arêtes : combes, bassins et
- * champs de neige lisses, roche détaillée sur les arêtes.
- */
-export const ALPINE_DETAIL_FLOOR = 0.35;
-/** En haute montagne, part retirée des crêtes vives des petites octaves (RIDGE_WAVELENGTH) sur les pentes raides. */
-export const ALPINE_RIDGED_DAMPING = 0.3;
-/**
- * Les crêtes naissent entre ces altitudes (m) des grandes formes (octaves plus larges que RIDGE_BAND[1]) : en dessous,
- * versants et fonds de vallée gardent le fBm ordinaire ; au-dessus, arêtes et cirques.
- */
-export const RIDGE_BASE = [600, 1500];
-/**
- * Amplitude relative des grandes formes plus larges que RIDGE_BAND[1] en haute montagne, en bruit de gradient : un
- * socle large et peu ondulé, que l'altitude de base du biome place au-dessus de la limite des neiges.
- */
-export const RIDGE_MASSIF = 0.8;
-/**
- * Facteur du bruit de gradient 2D (gradients unitaires), qui le rapproche de l'étendue du value noise. Sa valeur
- * absolue reste sous GRADIENT_NOISE_SCALE / √2, atteint quand les quatre gradients visent le centre d'une cellule.
- */
-export const GRADIENT_NOISE_SCALE = 1.4;
 /** Pentes entre lesquelles le terrain devient une paroi, détaillée en 3D plutôt que par le champ de hauteur. */
 export const WALL_SLOPE = [0.45, 0.9];
 /** Sur les parois, les octaves plus fines que ceci (m) sont retirées du champ de hauteur. */
@@ -211,23 +152,6 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   BIOME_STOPS,
   FIELD_RATIO: FIELDS.map((field) => field.ratio),
   RANGE_WARP,
-  RANGE_FOOTHILLS,
-  RANGE_FOOTHILL_LEVEL,
-  RANGE_SUMMITS,
-  PIEDMONT_LEVEL,
-  ALPINE_LEVEL,
-  RIDGE_BAND,
-  RIDGE_WARP,
-  RIDGE_CREST_SOFTNESS,
-  RIDGE_OFFSET,
-  RIDGE_AMPLITUDE,
-  RIDGE_DEPTH,
-  RIDGE_WEIGHT,
-  ALPINE_DETAIL_FLOOR,
-  ALPINE_RIDGED_DAMPING,
-  RIDGE_BASE,
-  RIDGE_MASSIF,
-  GRADIENT_NOISE_SCALE,
   CLIFF_HEIGHT,
   CLIFF_WIDTH,
   CLIFF_MIN_SLOPE,
