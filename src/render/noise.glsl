@@ -2,11 +2,15 @@
 // Les cellules sont des uint décalés par l'origine de la caméra (voir src/terrain/origins.ts) : x est la position
 // fractionnaire dans l'espace du bruit, cell la cellule entière qui s'y ajoute.
 
-// Hash entier « Integer Hash III » d'Inigo Quilez, dans [0, 1]
-float hash(uvec2 x) {
+// Hash entier « Integer Hash III » d'Inigo Quilez
+uint hashBits(uvec2 x) {
   uvec2 q = 1103515245u * ((x >> 1u) ^ x.yx);
-  uint n = 1103515245u * (q.x ^ (q.y >> 3u));
-  return float(n) * (1.0 / 4294967295.0);
+  return 1103515245u * (q.x ^ (q.y >> 3u));
+}
+
+// Le même, dans [0, 1]
+float hash(uvec2 x) {
+  return float(hashBits(x)) * (1.0 / 4294967295.0);
 }
 
 float hash3(uvec3 i) {
@@ -29,6 +33,35 @@ vec3 noised(vec2 x, uvec2 cell) {
     -1.0 + 2.0 * (a + k1 * u.x + k2 * u.y + k4 * u.x * u.y),
     2.0 * du * vec2(k1 + k4 * u.y, k2 + k4 * u.x)
   );
+}
+
+// Value noise 2D mêlé (part g) d'un bruit de gradient tiré des mêmes hachages, avec dérivées : (valeur dans [-1, 1],
+// d/dx, d/dy). Avec g = 0, c'est exactement noised(). Le value noise seul, plat à chaque sommet de sa grille, y pose
+// dômes et cuvettes ; le bruit de gradient seul y passe toujours par zéro, et ses crêtes 1 - |n| y feraient des cônes
+// réguliers
+vec3 hybridNoised(vec2 x, uvec2 cell, float g) {
+  vec2 fl = floor(x);
+  vec2 f = x - fl;
+  uvec2 i = uvec2(ivec2(fl)) + cell;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  uvec4 h = uvec4(hashBits(i), hashBits(i + uvec2(1u, 0u)), hashBits(i + uvec2(0u, 1u)), hashBits(i + uvec2(1u, 1u)));
+  vec4 value = vec4(h) * (1.0 / 4294967295.0);
+  // Gradients unitaires tirés des bits du même hachage, sans multiplication ni table : la seconde composante (bits
+  // forts mêlés aux faibles) est indépendante de la valeur (bits forts) comme de la première (bits faibles)
+  vec4 gx = vec4(h & 0xffffu) * (1.0 / 32767.5) - 1.0;
+  vec4 gy = vec4((h ^ (h >> 16u)) & 0xffffu) * (1.0 / 32767.5) - 1.0;
+  vec4 norm = inversesqrt(gx * gx + gy * gy + 1e-6);
+  gx *= norm;
+  gy *= norm;
+  vec2 ga = vec2(gx.x, gy.x), gb = vec2(gx.y, gy.y), gc = vec2(gx.z, gy.z), gd = vec2(gx.w, gy.w);
+  vec4 dots = vec4(dot(ga, f), dot(gb, f - vec2(1.0, 0.0)), dot(gc, f - vec2(0.0, 1.0)), dot(gd, f - vec2(1.0, 1.0)));
+  // Valeurs aux sommets : value noise (dans [-1, 1]) et bruit de gradient (×1,4, vers la même étendue), mêlés
+  vec4 v = (1.0 - g) * (2.0 * value - 1.0) + (1.4 * g) * dots;
+  float k1 = v.y - v.x, k2 = v.z - v.x, k4 = v.x - v.y - v.z + v.w;
+  // Gradients aux sommets, interpolés (seulement pour la part de gradient)
+  vec2 gi = (1.4 * g) * (ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd));
+  return vec3(v.x + k1 * u.x + k2 * u.y + k4 * u.x * u.y, du * vec2(k1 + k4 * u.y, k2 + k4 * u.x) + gi);
 }
 
 // Gradient unitaire pseudo-aléatoire, uniforme sur la sphère

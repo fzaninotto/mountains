@@ -1,4 +1,5 @@
 import { params } from '../params';
+import { ALPINE_OCTAVES, CREST_AMPLITUDE, CREST_BASE, CREST_SOFTNESS } from './constants';
 
 /** Un biome règle le relief : altitude de base (m), amplitude du fBm (m) et rugosité (gain entre octaves). */
 export interface Biome {
@@ -22,7 +23,7 @@ export function biomes(): Biome[] {
     PLAIN,
     HILLS,
     MIDDLE_MOUNTAINS,
-    { base: 1200, amplitude: params.height, gain: params.gain },
+    { base: 1500, amplitude: params.height, gain: params.gain },
   ];
 }
 
@@ -36,7 +37,26 @@ export function desertBias(): number {
   return (params.desertCoverage - 0.5) * 1.2;
 }
 
+/**
+ * Altitude maximale de la haute montagne : ses grandes octaves, sauf la première, sont des arêtes d'amplitude réduite
+ * (CREST_AMPLITUDE), sauf là où le massif reste sous CREST_BASE[1].
+ */
+function highMountainMax({ base, amplitude, gain }: Biome): number {
+  const crest = CREST_AMPLITUDE * (1 + Math.sqrt(CREST_SOFTNESS));
+  let sum = 1;
+  let b = gain;
+  for (let i = 1; i < ALPINE_OCTAVES; i++) {
+    sum += crest * b;
+    b *= gain;
+  }
+  const ridged = base + amplitude * (sum + b / (1 - gain));
+  const lowMassif = CREST_BASE[1] + (amplitude * gain) / (1 - gain);
+  return Math.max(ridged, lowMassif);
+}
+
 /** Borne haute du relief : base plus somme des amplitudes de toutes les octaves du biome le plus haut, plus dunes et falaises. */
 export function maxTerrainHeight(): number {
-  return Math.max(...biomes().map((b) => b.base + b.amplitude / (1 - b.gain))) + 100;
+  const all = biomes();
+  const lower = all.slice(0, -1).map((b) => b.base + b.amplitude / (1 - b.gain));
+  return Math.max(...lower, highMountainMax(all[all.length - 1])) + 100;
 }

@@ -339,12 +339,14 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
   // Bords nets, découpés par un bruit 3D : sur ces champs lisses (normale des grandes formes, bruit 2D étiré sur les
   // pentes), une transition large mêlait neige et roche en traînées grises floues. La normale fine ne fait qu'ôter de
-  // la neige (affleurements) : elle n'en pose pas en réseau sur les parois
+  // la neige (affleurements) : elle n'en pose pas en réseau sur les parois. Hors des pentes raides, le bruit ne fait
+  // que descendre la limite (névés) : au-dessus, il trouait replats et pentes douces de taches sans rapport au relief
   float snow = 0.0;
   if (p.y + 250.0 * abs(steepVariation) + 80.0 > snowLine) {
     float breakup = rockStain(p + vec3(57.3, 0.0, -31.9), footprint);
     float hold = min(s.coarse.y, s.normal.y + 0.12) - 0.05 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1) + 0.1 * breakup;
-    snow = smoothstep(snowLine - 15.0, snowLine + 15.0, p.y + 250.0 * steepVariation + 60.0 * breakup) * smoothstep(0.6, 0.63, hold);
+    float jitter = 250.0 * steepVariation + 60.0 * breakup;
+    snow = smoothstep(snowLine - 15.0, snowLine + 15.0, p.y + mix(max(jitter, 0.0), jitter, steep)) * smoothstep(0.6, 0.63, hold);
   }
   // Sastrugi sur la neige peu pentue
   if (snow > 0.0) {

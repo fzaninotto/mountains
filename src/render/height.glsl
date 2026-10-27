@@ -28,11 +28,54 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
   float a = 0.0, b = 1.0, wavelength = uScale;
   vec2 d = vec2(0.0);
   vec2 grad = vec2(0.0);
-  wallSlope = -1.0;
   // Altitude des grandes formes seules, figée en même temps que wallSlope
   float coarseHeight;
+  wallSlope = -1.0;
 
-  for (int i = 0; i < MAX_OCTAVES; i++) {
+  // Grandes octaves (plus larges que les seuils des parois, des crêtes vives et de la neige, voir l'échelle minimale
+  // du panneau). En haute montagne, elles mêlent un bruit de gradient au value noise, dont les sommets de grille
+  // font des dômes, et toutes sauf la première (le massif) deviennent des arêtes là où le massif est haut : crêtes
+  // continues reliant les sommets par des cols, autour de cirques ; en bas, versants et vallées gardent le fBm ordinaire
+  float alpine = smoothstep(ALPINE_LEVEL[0], ALPINE_LEVEL[1], level);
+  float crestBase = 0.0, previousCrest = 1.0, crestSlope = 0.0;
+  for (int i = 0; i < ALPINE_OCTAVES; i++) {
+    float w = clamp(octaves - float(i), 0.0, 1.0);
+    if (w <= 0.0) break;
+    vec3 n = alpine > 0.0 ? hybridNoised(uOctFrac[i] + q, uOctCell[i], ALPINE_GRADIENT * alpine)
+      : noised(uOctFrac[i] + q, uOctCell[i]);
+    float steep = steepness(height * length(grad));
+    if (i == 1) crestBase = alpine * smoothstep(CREST_BASE[0], CREST_BASE[1], base + height * a);
+    float v = n.x;
+    vec2 dv = n.yz;
+    if (i > 0 && crestBase > 0.0) {
+      // Arête 1 - 2|n|, à crête arrondie. Les arêtes plus fines naissent près de celles de l'octave précédente :
+      // contreforts et arêtes secondaires, combes et cirques lisses entre elles
+      float soft = sqrt(n.x * n.x + CREST_SOFTNESS);
+      float s = 1.0 + sqrt(CREST_SOFTNESS) - soft;
+      float crest = CREST_AMPLITUDE
+        * (i == 1 ? 1.0 : mix(CREST_VALLEY, 1.0, smoothstep(CREST_WEIGHT[0], CREST_WEIGHT[1], previousCrest)));
+      vec2 fold = -2.0 * crest * (n.x / soft) * n.yz;
+      v = mix(n.x, crest * (2.0 * s - 1.0), crestBase);
+      dv = mix(n.yz, fold, crestBase);
+      previousCrest = s;
+      // Pour l'érosion, seule compte la raideur de l'arête, et non le sens de sa pente : il s'inverse sur la crête, où
+      // la pente accumulée sauterait, et les octaves suivantes y feraient une marche, vue comme un mur. Raideur prise
+      // hors de l'arrondi, qui l'annulerait sur la crête même et y dresserait le détail en aiguilles
+      d += (1.0 - crestBase) * n.yz;
+      crestSlope += CREST_EROSION * crestBase * 4.0 * crest * crest * dot(n.yz, n.yz);
+    } else {
+      d += dv;
+    }
+    float amplitude = w * b * mix(1.0 / (1.0 + dot(d, d) + crestSlope), ROCK_ROUGHNESS, steep);
+    a += amplitude * v;
+    grad += amplitude * (transpose(jacobian) * dv);
+    b *= gain;
+    q = 2.0 * (M2 * q);
+    jacobian = 2.0 * (M2 * jacobian);
+    wavelength *= 0.5;
+  }
+
+  for (int i = ALPINE_OCTAVES; i < MAX_OCTAVES; i++) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
     if (w <= 0.0) break;
     vec3 n = noised(uOctFrac[i] + q, uOctCell[i]);
@@ -55,7 +98,7 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
 
     // L'atténuation par les dérivées accumulées imite l'érosion (vallées, versants doux) ;
     // sur les pentes raides, la roche reste à nu : les petites octaves gardent leur détail, et un peu plus
-    float erosion = 1.0 / (1.0 + dot(d, d));
+    float erosion = 1.0 / (1.0 + dot(d, d) + crestSlope);
     float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steep);
     // Sur les parois, le détail fin vient du bruit 3D (surfaceDistance) : un champ de hauteur s'y étirerait
     if (wavelength < WALL_DETAIL_WAVELENGTH) amplitude *= 1.0 - smoothstep(WALL_SLOPE[0], WALL_SLOPE[1], rockSlope);

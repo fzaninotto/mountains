@@ -64,6 +64,25 @@ export const RIDGE_WAVELENGTH = 120;
  * Avec un signe vif, la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de chaque arête.
  */
 export const RIDGE_SIGN_SOFTNESS = 0.01;
+/**
+ * Haute montagne, entre ces niveaux de relief : les ALPINE_OCTAVES premières octaves mêlent au value noise
+ * une part ALPINE_GRADIENT de bruit de gradient, et toutes sauf la première deviennent des arêtes 1 - 2|n| là où les grandes formes dépassent
+ * CREST_BASE (m).
+ */
+export const ALPINE_LEVEL = [0.6, 0.75];
+export const ALPINE_OCTAVES = 3;
+export const ALPINE_GRADIENT = 0.7;
+export const CREST_BASE = [800, 1600];
+/** Arrondi des arêtes des grandes octaves (unités du bruit, au carré). */
+export const CREST_SOFTNESS = 0.008;
+/** Les arêtes plus fines naissent entre ces valeurs de 1 - |n| de l'octave précédente. */
+export const CREST_WEIGHT = [0.4, 0.85];
+/** Amplitude des arêtes, relative à celle de leur octave. */
+export const CREST_AMPLITUDE = 0.75;
+/** Loin des arêtes de l'octave précédente, celles de l'octave suivante sont réduites à cette part. */
+export const CREST_VALLEY = 0.4;
+/** Part de la raideur des arêtes comptée dans l'érosion des octaves suivantes. */
+export const CREST_EROSION = 0.1;
 /** Pentes entre lesquelles le terrain devient une paroi, détaillée en 3D plutôt que par le champ de hauteur. */
 export const WALL_SLOPE = [0.45, 0.9];
 /** Sur les parois, les octaves plus fines que ceci (m) sont retirées du champ de hauteur. */
@@ -139,6 +158,7 @@ const GLSL_INTS: Record<string, number> = {
   CLIFF_JITTER_OCTAVE_FINE: CLIFF_JITTER_OCTAVES[1],
   CLIFF_JITTER_OCTAVE: CLIFF_JITTER_OCTAVES[0],
   MAX_OCTAVES,
+  ALPINE_OCTAVES,
   BIOME_COUNT: BIOME_STOPS.length,
   FIELD_COUNT: FIELDS.length,
   FIELD_OCTAVES,
@@ -160,6 +180,14 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   ROCK_ROUGHNESS,
   RIDGE_WAVELENGTH,
   RIDGE_SIGN_SOFTNESS,
+  ALPINE_LEVEL,
+  ALPINE_GRADIENT,
+  CREST_BASE,
+  CREST_SOFTNESS,
+  CREST_WEIGHT,
+  CREST_AMPLITUDE,
+  CREST_VALLEY,
+  CREST_EROSION,
   WALL_SLOPE,
   WALL_DETAIL_WAVELENGTH,
   SNOW_SMOOTH_WAVELENGTH,
