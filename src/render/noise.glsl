@@ -31,10 +31,16 @@ vec3 noised(vec2 x, uvec2 cell) {
   );
 }
 
-// Gradient unitaire pseudo-aléatoire du plan
-vec2 gradient2(uvec2 i) {
-  float angle = hash(i) * 6.2831853;
-  return vec2(cos(angle), sin(angle));
+// Gradient unitaire pseudo-aléatoire du plan, parmi seize directions (sans trigonométrie ni normalisation)
+const vec2 GRADIENTS2[16] = vec2[16](
+  vec2(1.0, 0.0), vec2(0.9239, 0.3827), vec2(0.7071, 0.7071), vec2(0.3827, 0.9239),
+  vec2(0.0, 1.0), vec2(-0.3827, 0.9239), vec2(-0.7071, 0.7071), vec2(-0.9239, 0.3827),
+  vec2(-1.0, 0.0), vec2(-0.9239, -0.3827), vec2(-0.7071, -0.7071), vec2(-0.3827, -0.9239),
+  vec2(0.0, -1.0), vec2(0.3827, -0.9239), vec2(0.7071, -0.7071), vec2(0.9239, -0.3827));
+vec2 gradient2(uvec2 x) {
+  uvec2 q = 1103515245u * ((x >> 1u) ^ x.yx);
+  uint n = 1103515245u * (q.x ^ (q.y >> 3u));
+  return GRADIENTS2[n >> 28u];
 }
 
 // Bruit de gradient 2D (type Perlin) avec dérivées analytiques : (valeur, d/dx, d/dy), de valeur absolue inférieure à

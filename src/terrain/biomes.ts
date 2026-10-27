@@ -11,6 +11,8 @@ export interface Biome {
 const PLAIN: Biome = { base: 0, amplitude: 120, gain: 0.42 };
 const HILLS: Biome = { base: 150, amplitude: 380, gain: 0.4 };
 const MIDDLE_MOUNTAINS: Biome = { base: 450, amplitude: 950, gain: 0.47 };
+/** Altitude de base de la haute montagne (m) : un haut massif, au-dessus de la limite des neiges, que creusent les crêtes. */
+const HIGH_MOUNTAIN_BASE = 2000;
 
 /**
  * Biomes dans l'ordre de BIOME_STOPS, interpolés par biomeAt() dans le shader. La mer et la plage suivent le niveau de
@@ -23,7 +25,7 @@ export function biomes(): Biome[] {
     PLAIN,
     HILLS,
     MIDDLE_MOUNTAINS,
-    { base: 1200, amplitude: params.height, gain: params.gain },
+    { base: HIGH_MOUNTAIN_BASE, amplitude: params.height, gain: params.gain },
   ];
 }
 

@@ -34,7 +34,7 @@ export const RANGE_WARP = 0.35;
  */
 export const RANGE_FOOTHILLS = [0.42, 0.7];
 export const RANGE_FOOTHILL_LEVEL = 0.21;
-export const RANGE_SUMMITS = [0.66, 1];
+export const RANGE_SUMMITS = [0.62, 0.95];
 
 /**
  * Piémont : entre ces niveaux de relief (montée, puis descente), au pied des reliefs, les creux des grandes formes
@@ -84,13 +84,12 @@ export const RIDGE_WAVELENGTH = 120;
 export const RIDGE_SIGN_SOFTNESS = 0.01;
 /**
  * Haute montagne : entre ces niveaux de relief, les octaves de RIDGE_BAND[0] à RIDGE_BAND[1] m deviennent un
- * multifractal à crêtes (arêtes continues, cols, cirques), sur un domaine déformé de RIDGE_WARP m au plus par
- * l'octave RIDGE_WARP_OCTAVE.
+ * multifractal à crêtes (arêtes continues, cols, cirques), sur un domaine déplacé de RIDGE_WARP m par unité de pente
+ * (dans l'espace du bruit) de la première octave, soit quelques centaines de mètres.
  */
-export const ALPINE_LEVEL = [0.65, 0.85];
-export const RIDGE_BAND = [190, 3000];
-export const RIDGE_WARP = 400;
-export const RIDGE_WARP_OCTAVE = 0;
+export const ALPINE_LEVEL = [0.58, 0.68];
+export const RIDGE_BAND = [700, 3000];
+export const RIDGE_WARP = 150;
 /**
  * Arrondi des arêtes des grandes octaves (unités du bruit, au carré), et amplitude des crêtes de RIDGE_BAND[1] m,
  * proportionnelle à la longueur d'onde pour les plus petites.
@@ -106,17 +105,17 @@ export const RIDGE_DEPTH = 2.5;
  * Les octaves à crêtes s'effacent loin des arêtes de la précédente, entre ces valeurs de son 1 - |n| : cirques et
  * fonds de vallée restent lisses.
  */
-export const RIDGE_WEIGHT = [0.4, 0.85];
+export const RIDGE_WEIGHT = [0.15, 0.7];
 /**
  * Les crêtes naissent entre ces altitudes (m) des grandes formes (octaves plus larges que RIDGE_BAND[1]) : en dessous,
  * versants et fonds de vallée gardent le fBm ordinaire ; au-dessus, arêtes et cirques.
  */
-export const RIDGE_BASE = [900, 1900];
+export const RIDGE_BASE = [600, 1500];
 /**
- * Amplitude relative des grandes formes plus larges que RIDGE_BAND[1] en haute montagne, en bruit de gradient : les
- * crêtes repliées varient moins que le fBm qu'elles remplacent, et les sommets garderaient sinon une altitude moindre.
+ * Amplitude relative des grandes formes plus larges que RIDGE_BAND[1] en haute montagne, en bruit de gradient : un
+ * socle large et peu ondulé, que l'altitude de base du biome place au-dessus de la limite des neiges.
  */
-export const RIDGE_MASSIF = 1.35;
+export const RIDGE_MASSIF = 0.8;
 /**
  * Facteur du bruit de gradient 2D (gradients unitaires), qui le rapproche de l'étendue du value noise. Sa valeur
  * absolue reste sous GRADIENT_NOISE_SCALE / √2, atteint quand les quatre gradients visent le centre d'une cellule.
@@ -197,7 +196,6 @@ const GLSL_INTS: Record<string, number> = {
   CLIFF_JITTER_OCTAVE_FINE: CLIFF_JITTER_OCTAVES[1],
   CLIFF_JITTER_OCTAVE: CLIFF_JITTER_OCTAVES[0],
   MAX_OCTAVES,
-  RIDGE_WARP_OCTAVE,
   BIOME_COUNT: BIOME_STOPS.length,
   FIELD_COUNT: FIELDS.length,
   FIELD_OCTAVES,

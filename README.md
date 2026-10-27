@@ -34,9 +34,9 @@ Chaque push sur `main` est testé, construit et publié sur la branche `gh-pages
 1. **Hash entier sans texture** (« Integer Hash III » d'Inigo Quilez) : pseudo-aléatoire calculé à partir des
    coordonnées de cellule (`uvec2`).
 2. **Value noise 2D à dérivées analytiques** (`noised`) : valeur et gradient exact, interpolation quintique.
-3. **Bruit de gradient 2D à dérivées analytiques** (`gradientNoised`) pour la haute montagne : nul aux sommets de
-   sa grille et de pente répartie sur toute la cellule, il donne des crêtes et des massifs sans les plateaux du value
-   noise.
+3. **Bruit de gradient 2D à dérivées analytiques** (`gradientNoised`) pour la haute montagne, à seize directions de
+   gradient tirées d'un hachage (ni trigonométrie ni normalisation) : nul aux sommets de sa grille et de pente répartie
+   sur toute la cellule, il donne des crêtes et des massifs sans les plateaux du value noise.
 4. **Bruit de gradient 3D** type Perlin, gradients uniformes sur la sphère, pour la couleur de la roche.
 5. **Perlin « amélioré » à 12 gradients d'arêtes** : variante moins coûteuse, pour creuser les parois.
 6. **fBm** (fractional Brownian motion) : somme d'octaves, chacune tournée (matrice `M2`) et de fréquence doublée,
@@ -48,11 +48,12 @@ Chaque push sur `main` est testé, construit et publié sur la branche `gh-pages
    (`1/(1+dot(d,d))`), d'où des vallées douces et des versants érodés.
 8. **Ridged noise** (`1 - 2|n|`) sur les pentes raides pour des arêtes vives, avec un signe adouci pour éviter les
    marches dans le relief.
-9. **Multifractal à crêtes** en haute montagne : sur les octaves de 3 km à 200 m, le bruit de gradient replié
-   (`1 - |n|`) dessine des arêtes continues qui relient les sommets par des cols, autour de cirques et de vallées en
-   auge. Domaine légèrement déformé (domain warping) ; chaque octave s'efface loin des arêtes de la précédente et
-   sous une altitude donnée ; la pente des crêtes n'entre pas dans l'érosion, sinon le détail monterait en lames sur
-   les arêtes.
+9. **Multifractal à crêtes** en haute montagne (`alpineRidges`), qui remplace les octaves de plus de 400 m : un
+   massif large en bruit de gradient, puis, de 3 km à 750 m, le bruit replié (`1 - |n|`) dessine des arêtes
+   continues qui relient les sommets par des cols, autour de hauts bassins, de cirques et de vallées en auge. Domaine
+   déformé le long de la pente du massif (sans bruit supplémentaire) ; chaque octave à crêtes s'efface loin des arêtes
+   de la précédente et sur les bas versants ; sa pente n'entre pas dans l'érosion, sinon le détail monterait en lames
+   sur les arêtes. Un seul bruit par octave : le fBm ordinaire n'est calculé que dans la transition.
 10. **Propagation de la jacobienne** à travers les octaves, pour la vraie pente en m/m.
 11. **Biomes continus** : quatre champs de bruit à très grande échelle (continent, aridité, chaînes, îles)
     interpolent les paramètres du relief, sans frontière nette. Les chaînes montent de la plaine par une large bande
