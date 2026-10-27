@@ -36,15 +36,8 @@ export const RANGE_FOOTHILLS = [0.42, 0.7];
 export const RANGE_FOOTHILL_LEVEL = 0.21;
 export const RANGE_SUMMITS = [0.62, 0.95];
 
-/**
- * Piémont : entre ces niveaux de relief (montée, puis descente), au pied des reliefs, les creux des grandes formes
- * (octaves de plus de PIEDMONT_WAVELENGTH m) sont comblés jusqu'à PIEDMONT_FLOOR (unités du fBm) : un glacis en pente
- * douce vers la plaine, d'où émergent les contreforts. Comblement relatif, en climat tempéré puis aride.
- */
+/** Piémont (glacis clair en climat aride, voir shading.glsl) : entre ces niveaux de relief, montée puis descente. */
 export const PIEDMONT_LEVEL = [0.3, 0.4, 0.55, 0.72];
-export const PIEDMONT_WAVELENGTH = 500;
-export const PIEDMONT_FLOOR = -0.1;
-export const PIEDMONT_FILL = [0.6, 1];
 
 /** Hauteur moyenne dont les côtes à falaises sont relevées (m), variable de 0,2 à 1,2 fois selon un bruit. */
 export const CLIFF_HEIGHT = 70;
@@ -88,24 +81,33 @@ export const RIDGE_SIGN_SOFTNESS = 0.01;
  * (dans l'espace du bruit) de la première octave, soit quelques centaines de mètres.
  */
 export const ALPINE_LEVEL = [0.58, 0.68];
-export const RIDGE_BAND = [700, 3000];
-export const RIDGE_WARP = 150;
+export const RIDGE_BAND = [1400, 3000];
+export const RIDGE_WARP = 300;
 /**
  * Arrondi des arêtes des grandes octaves (unités du bruit, au carré), et amplitude des crêtes de RIDGE_BAND[1] m,
  * proportionnelle à la longueur d'onde pour les plus petites.
  */
 export const RIDGE_CREST_SOFTNESS = 0.003;
+/** Valeur du bruit de gradient autour de laquelle il est replié en crêtes (voir alpineRidges). */
+export const RIDGE_OFFSET = 0.3;
 export const RIDGE_AMPLITUDE = 0.8;
 /**
  * Profondeur des vallées entre les crêtes, rapportée à |n| : le bruit de gradient reste le plus souvent près de zéro,
  * des crêtes 1 - 2|n| laisseraient des vallées peu creusées sous des sommets peu élevés.
  */
-export const RIDGE_DEPTH = 2.5;
+export const RIDGE_DEPTH = 2;
 /**
  * Les octaves à crêtes s'effacent loin des arêtes de la précédente, entre ces valeurs de son 1 - |n| : cirques et
  * fonds de vallée restent lisses.
  */
 export const RIDGE_WEIGHT = [0.15, 0.7];
+/**
+ * Sous les crêtes, le détail plus fin garde au moins cette part de son amplitude loin des arêtes : combes, bassins et
+ * champs de neige lisses, roche détaillée sur les arêtes.
+ */
+export const ALPINE_DETAIL_FLOOR = 0.35;
+/** En haute montagne, part retirée des crêtes vives des petites octaves (RIDGE_WAVELENGTH) sur les pentes raides. */
+export const ALPINE_RIDGED_DAMPING = 0.3;
 /**
  * Les crêtes naissent entre ces altitudes (m) des grandes formes (octaves plus larges que RIDGE_BAND[1]) : en dessous,
  * versants et fonds de vallée gardent le fBm ordinaire ; au-dessus, arêtes et cirques.
@@ -213,16 +215,16 @@ const GLSL_FLOATS: Record<string, number | readonly number[]> = {
   RANGE_FOOTHILL_LEVEL,
   RANGE_SUMMITS,
   PIEDMONT_LEVEL,
-  PIEDMONT_WAVELENGTH,
-  PIEDMONT_FLOOR,
-  PIEDMONT_FILL,
   ALPINE_LEVEL,
   RIDGE_BAND,
   RIDGE_WARP,
   RIDGE_CREST_SOFTNESS,
+  RIDGE_OFFSET,
   RIDGE_AMPLITUDE,
   RIDGE_DEPTH,
   RIDGE_WEIGHT,
+  ALPINE_DETAIL_FLOOR,
+  ALPINE_RIDGED_DAMPING,
   RIDGE_BASE,
   RIDGE_MASSIF,
   GRADIENT_NOISE_SCALE,

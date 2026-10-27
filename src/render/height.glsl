@@ -21,9 +21,10 @@ float alpineShare(float wavelength) {
 // autour de fonds plats, et des massifs en tables). Les plus larges que RIDGE_BAND[1] forment le massif ; dans la bande
 // des crêtes, le bruit replié 1 - |n| dessine des arêtes continues qui relient les sommets par des cols, autour de
 // cirques et de vallées en auge, et le bruit simple (fBm à dérivées) les bas versants. Un seul bruit par octave.
-// Renvoie (hauteur, gradient par mètre) en unités du fBm, et la pente accumulée (unités du bruit) pour l'érosion des
-// octaves suivantes
-vec3 alpineRidges(vec2 x, float octaves, float base, float height, float gain, out vec2 massifSlope) {
+// Renvoie (hauteur, gradient par mètre) en unités du fBm, la pente accumulée (unités du bruit) pour l'érosion des
+// octaves suivantes, et le poids de leur détail : plein sur les arêtes, faible dans les combes et les bassins
+vec3 alpineRidges(vec2 x, float octaves, float base, float height, float gain, out vec2 massifSlope,
+    out float detail) {
   vec2 q = x / uScale;
   mat2 jacobian = mat2(1.0 / uScale);
   vec3 h = vec3(0.0);
@@ -33,6 +34,7 @@ vec3 alpineRidges(vec2 x, float octaves, float base, float height, float gain, o
   massifSlope = vec2(0.0);
   // Part des crêtes selon l'altitude du massif, fixée à la première octave à crêtes
   float ridgeBase = -1.0;
+  detail = 1.0;
   for (int i = 0; i < MAX_OCTAVES; i++) {
     float w = clamp(octaves - float(i), 0.0, 1.0);
     if (w <= 0.0 || wavelength < 0.6 * RIDGE_BAND[0]) break;
@@ -50,16 +52,20 @@ vec3 alpineRidges(vec2 x, float octaves, float base, float height, float gain, o
       if (ridgeBase < 0.0) ridgeBase = smoothstep(RIDGE_BASE[0], RIDGE_BASE[1], base + height * h.x);
       float plain = w * b * band * (1.0 - ridgeBase) / (1.0 + dot(massifSlope, massifSlope));
       h += plain * vec3(g.x, slope);
-      float soft = sqrt(g.x * g.x + RIDGE_CREST_SOFTNESS);
+      // Repli autour de RIDGE_OFFSET et non de zéro : le bruit de gradient s'annule à chaque sommet de sa grille, et
+      // 1 - |n| y dresserait des cônes ronds réguliers
+      float m = g.x - RIDGE_OFFSET;
+      float soft = sqrt(m * m + RIDGE_CREST_SOFTNESS);
       float r = 1.0 + sqrt(RIDGE_CREST_SOFTNESS) - soft;
       // Les plus petites crêtes sont moins hautes : sinon leurs pentes, égales à chaque octave, s'ajouteraient sur les
       // arêtes en lames trop raides. Elles ne comptent pas dans l'érosion : leur pente change de signe sur l'arête, où
       // le détail des octaves suivantes, moins atténué sur l'étroite bande du sommet, monterait en lame
       float crest = RIDGE_AMPLITUDE * wavelength / RIDGE_BAND[1];
       float amplitude = w * b * band * ridgeBase * crestWeight / (1.0 + dot(massifSlope, massifSlope));
-      h += amplitude * crest * vec3(1.0 - RIDGE_DEPTH * (1.0 - r), -RIDGE_DEPTH * (g.x / soft) * slope);
+      h += amplitude * crest * vec3(1.0 - RIDGE_DEPTH * (1.0 - r), -RIDGE_DEPTH * (m / soft) * slope);
       crestWeight = smoothstep(RIDGE_WEIGHT[0], RIDGE_WEIGHT[1], r);
       massifSlope += band * (1.0 - ridgeBase) * g.yz;
+      detail = mix(1.0, mix(ALPINE_DETAIL_FLOOR, 1.0, crestWeight), ridgeBase);
     }
     b *= gain;
     q = 2.0 * (M2 * q);
@@ -88,15 +94,16 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
   vec2 grad = vec2(0.0);
   // Haute montagne : les grandes octaves du fBm s'effacent devant le multifractal à crêtes
   float alpine = smoothstep(ALPINE_LEVEL[0], ALPINE_LEVEL[1], level);
+  // Poids du détail des octaves plus fines que les crêtes
+  float detail = 1.0;
   if (alpine > 0.0) {
     vec2 massifSlope;
-    vec3 ridges = alpine * alpineRidges(x, octaves, base, height, gain, massifSlope);
+    vec3 ridges = alpine * alpineRidges(x, octaves, base, height, gain, massifSlope, detail);
+    detail = mix(1.0, detail, alpine);
     a = ridges.x;
     grad = ridges.yz;
     d = alpine * massifSlope;
   }
-  // Piémont : les creux des grandes formes sont comblés en glacis, plus franchement en climat aride
-  float fill = piedmont(level) * mix(PIEDMONT_FILL[0], PIEDMONT_FILL[1], c.y);
   wallSlope = -1.0;
   // Altitude des grandes formes seules, figée en même temps que wallSlope
   float coarseHeight;
@@ -106,15 +113,6 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
     if (w <= 0.0) break;
     float keep = alpine > 0.0 ? 1.0 - alpine * alpineShare(wavelength) : 1.0;
     vec3 n = keep > 0.0 ? noised(uOctFrac[i] + q, uOctCell[i]) : vec3(0.0);
-    if (fill > 0.0 && wavelength < PIEDMONT_WAVELENGTH && 2.0 * wavelength >= PIEDMONT_WAVELENGTH) {
-      // Maximum adouci avec le fond du glacis ; le détail qui suit s'atténue d'autant sur le comblement
-      vec3 filled = softMin(vec3(-a, -grad), vec3(-PIEDMONT_FLOOR, 0.0, 0.0), 0.3);
-      float buried = fill * clamp((PIEDMONT_FLOOR - a) / 0.3 + 0.5, 0.0, 1.0);
-      a = mix(a, -filled.x, fill);
-      grad = mix(grad, -filled.yz, fill);
-      d *= 1.0 - buried;
-      b *= 1.0 - 0.7 * buried;
-    }
     // Pour les octaves fines, la pente qui décide « roche ou versant érodé » est figée sur celle des grandes formes :
     // sinon le détail rend la pente plus raide, qui appelle plus de détail, et le terrain bascule en liserés nets
     if (wallSlope < 0.0 && wavelength < WALL_DETAIL_WAVELENGTH) {
@@ -125,7 +123,8 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
     float steep = steepness(rockSlope);
 
     // Sur les pentes raides, les petites octaves deviennent des crêtes vives : arêtes et ravines de roche cassée
-    float ridged = wavelength < RIDGE_WAVELENGTH ? steep : 0.0;
+    // En haute montagne, moins : sur ses longs versants raides, elles hérissaient le sol de pointes
+    float ridged = wavelength < RIDGE_WAVELENGTH ? steep * (1.0 - ALPINE_RIDGED_DAMPING * alpine) : 0.0;
     float v = mix(n.x, 1.0 - 2.0 * abs(n.x), ridged);
     // Signe adouci : avec sign(n.x), la pente accumulée (donc l'érosion des octaves suivantes) sauterait le long de
     // chaque arête, et le relief y ferait une marche, vue comme un fil ou un arc net
@@ -135,7 +134,7 @@ float terrainHeight(vec2 x, float octaves, out vec2 slope, out float wallSlope, 
     // L'atténuation par les dérivées accumulées imite l'érosion (vallées, versants doux) ;
     // sur les pentes raides, la roche reste à nu : les petites octaves gardent leur détail, et un peu plus
     float erosion = 1.0 / (1.0 + dot(d, d));
-    float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steep);
+    float amplitude = w * b * mix(erosion, ROCK_ROUGHNESS, steep) * (wavelength < 0.6 * RIDGE_BAND[0] ? detail : 1.0);
     // Sur les parois, le détail fin vient du bruit 3D (surfaceDistance) : un champ de hauteur s'y étirerait
     if (wavelength < WALL_DETAIL_WAVELENGTH) amplitude *= 1.0 - smoothstep(WALL_SLOPE[0], WALL_SLOPE[1], rockSlope);
     if (wavelength < SNOW_SMOOTH_WAVELENGTH) amplitude *= 1.0 - snowSmoothing(base + height * a, height * length(grad));

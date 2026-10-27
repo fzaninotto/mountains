@@ -228,6 +228,9 @@ float rockVariation(vec3 p) {
   return 0.65 * gradientNoise3(rockSpace(p, 0) + 0.25, uRockCell[0]) + 0.35 * gradientNoise3(rockSpace(p, 1) + 0.25, uRockCell[1]);
 }
 
+// Hauteur (m) dont la pelouse alpine dépasse la limite de la végétation (forêts), sur les pentes douces
+const float ALPINE_MEADOW = 500.0;
+
 vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float footprint = t * lodPixelAngle;
   // Vu en rasant, un pixel couvre 1/cos plus de sol en profondeur : un détail encore visible en largeur y serait
@@ -279,8 +282,12 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   // Végétation : là où les formes (et non le détail du pixel) sont peu pentues, davantage dans les creux,
   // sous la limite de végétation, hors désert
   float gentle = mix(s.normal.y, s.coarse.y, 0.75) - 0.06 * s.cavity + 0.04 * variation;
+  // Au-dessus des forêts, la pelouse alpine monte encore de ALPINE_MEADOW mètres sur les pentes plus douces
+  float vegetationY = p.y + variation * 250.0;
+  float meadow = smoothstep(0.88, 0.96, gentle)
+    * (1.0 - smoothstep(uVegetation + ALPINE_MEADOW - 200.0, uVegetation + ALPINE_MEADOW + 200.0, vegetationY));
   float vegetation = smoothstep(0.8, 0.93, gentle) * (1.0 - smoothstep(0.2, 1.0, desert))
-    * (1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, p.y + variation * 250.0));
+    * max(1.0 - smoothstep(uVegetation - 200.0, uVegetation + 200.0, vegetationY), meadow);
 
   // Herbe : teinte qui varie doucement de quelques mètres à quelques centaines (frais, sec, plus sombre), touffes
   // de 6 m à 70 cm et brins de 40 cm à 2 cm, effacés selon l'empreinte en profondeur
@@ -341,14 +348,15 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
     * smoothstep(0.05, 0.3, length(slopeDir));
   float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
-  // Bords nets, découpés par un bruit 3D : sur ces champs lisses (normale des grandes formes, bruit 2D étiré sur les
-  // pentes), une transition large mêlait neige et roche en traînées grises floues. La normale fine ne fait qu'ôter de
-  // la neige (affleurements) : elle n'en pose pas en réseau sur les parois
+  // Bords nets : sur ces champs lisses (normale des grandes formes, bruit 2D étiré sur les pentes), une transition
+  // large mêlait neige et roche en traînées grises floues. La roche affleure selon la pente (arêtes, pentes raides) ;
+  // un bruit 3D ne fait que découper ses bords et onduler la limite des neiges. Plus fort, il semait des taches de
+  // roche au hasard sur la neige, et sous la limite, des plaques nues lisses là où le relief est adouci pour la neige
   float snow = 0.0;
-  if (p.y + 250.0 * abs(steepVariation) + 80.0 > snowLine) {
+  if (p.y + 130.0 > snowLine) {
     float breakup = rockStain(p + vec3(57.3, 0.0, -31.9), footprint);
-    float hold = min(s.coarse.y, s.normal.y + 0.12) - 0.05 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1) + 0.1 * breakup;
-    snow = smoothstep(snowLine - 15.0, snowLine + 15.0, p.y + 250.0 * steepVariation + 60.0 * breakup) * smoothstep(0.6, 0.63, hold);
+    float hold = mix(s.normal.y, s.coarse.y, 0.7) + 0.04 - 0.12 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1) + 0.03 * breakup;
+    snow = smoothstep(snowLine - 15.0, snowLine + 15.0, p.y + 80.0 * steepVariation + 40.0 * breakup) * smoothstep(0.7, 0.73, hold);
   }
   // Sastrugi sur la neige peu pentue
   if (snow > 0.0) {

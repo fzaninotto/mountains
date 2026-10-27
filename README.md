@@ -53,13 +53,15 @@ Chaque push sur `main` est testé, construit et publié sur la branche `gh-pages
    continues qui relient les sommets par des cols, autour de hauts bassins, de cirques et de vallées en auge. Domaine
    déformé le long de la pente du massif (sans bruit supplémentaire) ; chaque octave à crêtes s'efface loin des arêtes
    de la précédente et sur les bas versants ; sa pente n'entre pas dans l'érosion, sinon le détail monterait en lames
-   sur les arêtes. Un seul bruit par octave : le fBm ordinaire n'est calculé que dans la transition.
+   sur les arêtes. Repli autour d'une valeur non nulle, pour que les sommets de la grille du bruit ne dressent pas des
+   cônes. Le détail plus fin est pondéré par la proximité des arêtes : combes et champs de neige lisses, roche
+   détaillée sur les crêtes. Un seul bruit par octave : le fBm ordinaire n'est calculé que dans la transition.
 10. **Propagation de la jacobienne** à travers les octaves, pour la vraie pente en m/m.
 11. **Biomes continus** : quatre champs de bruit à très grande échelle (continent, aridité, chaînes, îles)
     interpolent les paramètres du relief, sans frontière nette. Les chaînes montent de la plaine par une large bande
     de collines et de contreforts.
-12. **Piémonts et glacis** : au pied des reliefs, les creux des grandes formes sont comblés par un maximum adouci :
-    un glacis en pente douce vers la plaine, plus marqué et plus clair en climat aride, dont émergent les contreforts.
+12. **Glacis** : au pied des reliefs arides, les pentes douces prennent la teinte claire d'un cailloutis (ombrage
+    seulement).
 13. **Falaises côtières** construites comme une marche sur les grandes formes, avec une distance au pied de la
     falaise pour le raymarching.
 14. **Dunes procédurales** : profil asymétrique (versant au vent doux, face d'avalanche raide), phase déformée par
