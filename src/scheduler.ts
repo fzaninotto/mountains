@@ -64,6 +64,8 @@ export class FrameScheduler {
   private lastPreviewAt = -Infinity;
   /** Le dernier travail soumis était une bande d'image nette ou d'export. */
   private jobSubmitted = false;
+  /** Le dernier travail soumis était un aperçu. */
+  private previewSubmitted = false;
   /** Instants des aperçus affichés pendant la dernière seconde : la cadence réellement perçue. */
   private readonly previewTimes: number[] = [];
   /** Derniers intervalles entre aperçus consécutifs (s). */
@@ -122,7 +124,13 @@ export class FrameScheduler {
     // attend la sonde qui la place au-dessus du sol
     if (!this.camera.ready() || !this.renderer.gpuIdle()) return;
     if (this.jobSubmitted) this.adaptPixelBudget(this.renderer.lastGpuTime);
+    // Un aperçu plus long que MOTION_GAP ne compte pas comme intervalle de mouvement : sa durée seule doit alors
+    // baisser la résolution, sinon elle resterait bloquée
+    if (this.previewSubmitted && this.renderer.lastGpuTime > MOTION_GAP) {
+      this.adaptMovingScale(this.renderer.lastGpuTime / 1000);
+    }
     this.jobSubmitted = false;
+    this.previewSubmitted = false;
     this.resize();
 
     if (this.exportJob) {
@@ -170,6 +178,7 @@ export class FrameScheduler {
     renderer.renderRows(this.preview, this.camera.view(), 0, height, width, height, true, lodHeight);
     this.show({ target: this.preview, width, height, scale: this.movingScale });
     this.dirty = false;
+    this.previewSubmitted = true;
     this.recordPreview(now);
   }
 
