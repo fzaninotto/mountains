@@ -4,6 +4,12 @@ Générateur de paysages infinis rendus en temps réel par raymarching sur le GP
 génération : le relief est une fonction calculée pixel par pixel, avec un niveau de détail qui suit la taille d'un
 pixel à l'écran.
 
+**Démo : [redotheweb.com/mountains](http://www.redotheweb.com/mountains/)**
+
+![Massif enneigé au-dessus d'une plaine, dans la brume](docs/screenshot.jpg)
+
+## Utilisation
+
 ```bash
 npm install
 npm run dev        # serveur de développement
@@ -18,6 +24,116 @@ dans le HUD : une capture d'écran suffit pour retrouver un point de vue.
 
 Modes de développement : `#bench` mesure les performances et compare l'image à une référence, `#capture` rend les
 vues de `captures/views.json`, `#probe-test` compare les sondes GPU à des altitudes de référence.
+
+Chaque push sur `main` est testé, construit et publié sur la branche `gh-pages` (`.github/workflows/pages.yml`).
+
+## Techniques
+
+### Bruits procéduraux (`noise.glsl`)
+
+1. **Hash entier sans texture** (« Integer Hash III » d'Inigo Quilez) : pseudo-aléatoire calculé à partir des
+   coordonnées de cellule (`uvec2`).
+2. **Value noise 2D à dérivées analytiques** (`noised`) : valeur et gradient exact, interpolation quintique.
+3. **Bruit de gradient 3D** type Perlin, gradients uniformes sur la sphère, pour la couleur de la roche.
+4. **Perlin « amélioré » à 12 gradients d'arêtes** : variante moins coûteuse, pour creuser les parois.
+5. **fBm** (fractional Brownian motion) : somme d'octaves, chacune tournée (matrice `M2`) et de fréquence doublée,
+   pour casser l'alignement sur la grille.
+
+### Modélisation du relief (`height.glsl`, `climate.glsl`, `rock.glsl`)
+
+6. **fBm « à dérivées »** (érosion simulée) : la pente accumulée atténue les octaves suivantes
+   (`1/(1+dot(d,d))`), d'où des vallées douces et des versants érodés.
+7. **Ridged noise** (`1 - 2|n|`) sur les pentes raides pour des arêtes vives, avec un signe adouci pour éviter les
+   marches dans le relief.
+8. **Propagation de la jacobienne** à travers les octaves, pour la vraie pente en m/m.
+9. **Biomes continus** : quatre champs de bruit à très grande échelle (continent, aridité, chaînes, îles)
+   interpolent les paramètres du relief, sans frontière nette.
+10. **Falaises côtières** construites comme une marche sur les grandes formes, avec une distance au pied de la
+    falaise pour le raymarching.
+11. **Dunes procédurales** : profil asymétrique (versant au vent doux, face d'avalanche raide), phase déformée par
+    domain warping, croissants et barkhanes, raccords par smooth min/max (`softMin`, `softMaxDune`).
+12. **Champ de hauteur + creusement 3D** : sur les parois verticales, un champ de hauteur ne ferait que s'étirer ;
+    on soustrait un bruit 3D, et le terrain devient une fonction de distance hybride (`surfaceDistance`).
+13. **Bornes de Lipschitz** : la distance est divisée par la pente maximale du bruit, pour que les rayons ne
+    traversent pas la surface.
+
+### Raymarching (`raymarch.glsl`)
+
+14. **Raymarching d'un champ de hauteur / d'une SDF**, pas proportionnel à l'écart vertical (`uStep`).
+15. **Sur-relaxation** (ω = 1,6) avec repli si deux sphères de sécurité ne se recouvrent plus (Keinert et al.).
+16. **Affinage de l'impact par dichotomie** (6 itérations).
+17. **Saut initial** jusqu'à l'altitude maximale du relief (`uMaxH`), et sortie anticipée quand le rayon remonte
+    au-dessus.
+18. **Courbure terrestre** simulée en courbant le rayon (terme en t²/2R) plutôt que la Terre, avec intersection
+    analytique de la sphère d'eau.
+19. **Ombres douces** à la Inigo Quilez (`min(k·h/t)`), avec un niveau de détail décroissant le long du rayon
+    d'ombre.
+20. **Normales par différences finies sur un tétraèdre** (4 évaluations au lieu de 6), à l'échelle d'un pixel.
+
+### Niveau de détail et précision
+
+21. **LOD au pixel près** (`lod(t)`) : seules les octaves plus larges que deux pixels à la distance t sont
+    gardées, avec un fondu de la dernière : un filtrage analytique de l'aliasing.
+22. **Effacement selon l'empreinte en profondeur** : vu en rasant, un pixel couvre 1/cos plus de sol, les détails
+    s'effacent donc plus tôt.
+23. **Origines en double précision** (`origins.ts`) : le CPU calcule en float64 la cellule entière et la partie
+    fractionnaire de la caméra pour chaque octave, le GPU n'ajoute que la petite position relative
+    (camera-relative rendering). Le monde reste précis à des milliers de kilomètres de l'origine.
+
+### Matériaux et éclairage (`shading.glsl`)
+
+24. **Normale fine et normale grossière** : la fine pour l'éclairage, la grossière pour la répartition des
+    matériaux (neige, herbe, roche).
+25. **Cavité** obtenue par différence entre deux LOD : creux et bosses pilotent l'occlusion, la neige et la
+    végétation.
+26. **Texturage procédural** : strates de roche inclinées, lichens, herbe, forêt en massifs aux lisières découpées,
+    blocs d'éboulis (un bloc aléatoire par cellule, jittered grid), neige dépendant de l'exposition.
+27. **Micro-relief en normal perturbation seulement** : rides de sable, touffes, sastrugi et éboulis inclinent la
+    normale sans toucher à la géométrie.
+28. **Éclairage ambiant** : irradiance du ciel échantillonnée selon quelques directions pondérées, plus la lumière
+    renvoyée par le sol et les versants d'en face.
+29. **Eau** : Fresnel, rayons réfléchis re-marchés avec un budget réduit, reflet du soleil en GGX élargi avec la
+    distance, absorption selon la profondeur (le rouge disparaît en premier), écume sur les côtes marines.
+
+### Atmosphère (`atmosphere.glsl`)
+
+30. **Diffusion de Rayleigh + Mie** (aérosols) intégrée analytiquement pour une densité exponentielle, sans marcher
+    dans l'atmosphère.
+31. **Fonction de phase de Henyey-Greenstein** (g = 0,85) pour le halo solaire.
+32. **Absorption par l'ozone** (bande de Chappuis), qui empêche le ciel de virer au vert au couchant.
+33. **Masse d'air de Kasten-Young** pour la couleur du soleil selon sa hauteur.
+34. **Diffusion multiple** approchée par un terme isotrope.
+35. **Ciel et brume unifiés** : la même intégrale, prise jusqu'à l'infini pour le ciel, d'où un raccord sans
+    jointure.
+36. **Ombre volumétrique du relief dans l'air** (`shadowedLength`) : rayons crépusculaires bon marché.
+
+### Post-traitement et pipeline (`terrain.frag.glsl`, `scheduler.ts`, `renderer.ts`)
+
+37. **Exposition auto-adaptative** fondée sur la luminance d'un sol plat, avec compensation du contre-jour.
+38. **Tone mapping ACES** (approximation de Narkowicz), puis gamma.
+39. **Vignettage, éblouissement solaire, grain fixe** servant de dithering contre le banding.
+40. **Résolution adaptative** : aperçu dont l'échelle suit la cadence mesurée (médiane et zone morte).
+41. **Raffinement progressif** par niveaux de résolution, calculés par bandes sur plusieurs images.
+42. **Antialiasing par accumulation** : 6 rendus décalés d'un sous-pixel (`uJitter`), moyennés par blending
+    avec `CONSTANT_ALPHA`.
+43. **Lecture GPU → CPU asynchrone (« sondes »)** : `readPixels` vers un PBO, `fenceSync` puis `getBufferSubData`,
+    floats empaquetés bit à bit dans du RGBA8.
+44. **Assemblage modulaire des shaders**, constantes TypeScript injectées en tête du GLSL.
+
+## Le relief n'existe qu'en GLSL
+
+Le CPU a pourtant besoin du relief : altitude du sol pour placer la caméra et l'empêcher de traverser le relief,
+biome et hauteur au-dessus du sol pour le HUD et l'URL, soleil caché ou non par le relief pour l'éblouissement. Il
+les demande au GPU par des sondes : un petit programme, assemblé des mêmes modules que le terrain avec un autre
+`main()` (`render/probe.frag.glsl`), calcule ces valeurs pour un point et les relit sans bloquer, une à deux images
+plus tard.
+
+La caméra garde la dernière réponse, associée à la position et aux réglages sondés. Elle ne se place qu'une fois
+la réponse reçue (chargement, URL, téléportation, #bench, #capture) : rien n'est dessiné avant. En vol, la
+collision se sert de la réponse précédente ; la sonde relève aussi le sol le plus haut sur le trajet prévu
+jusqu'à la réponse suivante, ce qui sert de marge. L'image nette attend la sonde de la position finale. Les
+constantes n'existent qu'une fois, dans `terrain/constants.ts`. `#probe-test` vérifie que des altitudes de
+référence ne changent pas.
 
 ## Organisation
 
@@ -44,39 +160,6 @@ src/
     └── fullscreen.vert.glsl, blit.frag.glsl
 ```
 
-## Principes
+## Licence
 
-**Le relief n'existe qu'en GLSL.** Le CPU en a pourtant besoin : altitude du sol pour placer la caméra et
-l'empêcher de traverser le relief, biome et hauteur au-dessus du sol pour le HUD et l'URL, soleil caché ou non par
-le relief pour l'éblouissement (`uSunVisible`, `uSunShadow`). Il les demande au GPU par des **sondes** : un petit
-programme, assemblé des mêmes modules que le terrain avec un autre `main()` (`render/probe.frag.glsl`), calcule
-ces valeurs pour un point et les écrit bit à bit dans une petite cible RGBA8, sans extension ni perte. Elles sont
-relues sans bloquer (`readPixels` vers un tampon, `fenceSync`, puis `getBufferSubData` une fois la fence passée),
-une à deux images plus tard.
-
-La caméra garde la dernière réponse, associée à la position et aux réglages sondés. Elle ne se place qu'une fois
-la réponse reçue (chargement, URL, téléportation, #bench, #capture) : rien n'est dessiné avant. En vol, la
-collision se sert de la réponse précédente ; la sonde relève aussi le sol le plus haut sur le trajet prévu
-jusqu'à la réponse suivante, ce qui sert de marge. L'image nette attend la sonde de la position finale. Les
-constantes n'existent qu'une fois, dans `terrain/constants.ts`, que le renderer injecte en tête des shaders.
-`#probe-test` vérifie que des altitudes de référence ne changent pas.
-
-**Précision à grande distance.** Le GPU travaille en float32 et en coordonnées relatives à la caméra. Pour chaque
-octave de chaque bruit, `terrain/origins.ts` calcule en double précision la cellule (entier) et la partie
-fractionnaire de la position de la caméra ; le shader n'y ajoute que la position relative, petite. Le monde reste
-précis à des milliers de kilomètres de l'origine.
-
-**Niveau de détail au pixel près.** `lod()` ne garde que les octaves plus grandes que deux pixels à la distance du
-point ; les détails plus fins (dunes, bruit 3D de la roche…) s'effacent de la même façon.
-
-**Biomes continus.** Quatre champs de bruit à très grande échelle (continent, aridité, chaînes de montagnes, îles)
-donnent en chaque point un niveau de relief, un poids de désert et un poids de falaise. Le niveau de relief
-interpole continûment les biomes de `terrain/biomes.ts` : mer, plage, plaine, collines, moyenne et haute montagne.
-
-**Roche.** Le fBm « à dérivées » imite l'érosion en lissant les versants ; sur les pentes raides, ce lissage est
-remplacé par des crêtes vives. Sur les parois, un champ de hauteur ne pourrait que s'étirer : leur détail vient
-d'un bruit 3D qui creuse la surface (`surfaceDistance()`), et la couleur de la roche d'un bruit de gradient 3D.
-
-**Ordonnancement.** En mouvement, un aperçu basse résolution est recalculé à chaque image, avec une échelle ajustée
-pour tenir la cadence visée. À l'arrêt, l'image nette est calculée par bandes sur plusieurs images, puis lissée
-par la moyenne de six rendus décalés d'une fraction de pixel (antialiasing).
+[MIT](LICENSE)
