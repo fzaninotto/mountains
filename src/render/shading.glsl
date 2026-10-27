@@ -113,48 +113,59 @@ vec3 streakNoise(vec2 x, int octave, vec2 offset, uvec2 scale) {
   return vec3(n.x, transpose(jacobian) * (k * n.yz));
 }
 
-// Rides de sable : octave dont le réseau porte les rides, sa longueur d'onde divisée par environ 3 (≈ 24 cm)
+// Rides de sable : bruits de l'octave 13 du relief (73 cm), et réseau de l'octave 11 dont les rides ont pour vecteurs
+// d'onde des combinaisons entières de ses axes, de norme voisine de RIPPLE_NORM (longueur d'onde ≈ 24 cm) : la phase
+// reste attachée au sol malgré l'origine décalée, et deux directions voisines ne diffèrent que de 5° environ
 const int RIPPLE_OCTAVE = 13;
-// Directions des rides dans l'espace de l'octave : combinaisons entières de ses axes, pour que la phase reste attachée
-// au sol malgré l'origine décalée, de normes voisines de 3, et leurs angles sur un demi-tour
-const vec2 RIPPLE_DIRS[8] = vec2[8](vec2(3.0, 0.0), vec2(3.0, 1.0), vec2(2.0, 2.0), vec2(1.0, 3.0), vec2(0.0, 3.0),
-  vec2(-1.0, 3.0), vec2(-2.0, 2.0), vec2(-3.0, 1.0));
-const float RIPPLE_ANGLES[9] = float[9](0.0, 0.32175, 0.785398, 1.249046, 1.570796, 1.892547, 2.356194, 2.819842,
-  3.141593);
+const int RIPPLE_GRID_OCTAVE = 11;
+const float RIPPLE_NORM = 12.0;
+// Pas angulaire entre deux directions voisines du réseau
+const float RIPPLE_STEP = 3.1415927 / 38.0;
 // Hauteur des rides relative à leur longueur d'onde
-const float RIPPLE_HEIGHT = 0.07;
+const float RIPPLE_HEIGHT = 0.035;
 
-// Une famille de rides de direction d (espace de l'octave), orientée dans le sens du vent windQ : versant au vent en
-// pente douce, face sous le vent raide. Renvoie (hauteur dans [0, 1], gradient par mètre de la hauteur en m)
-vec3 rippleSet(vec2 q, mat2 jacobian, vec2 d, vec2 windQ, vec3 warp, float wavelength) {
+float rippleWavelength() {
+  return uScale / exp2(float(RIPPLE_GRID_OCTAVE)) / RIPPLE_NORM;
+}
+
+// Une famille de rides dont le vecteur d'onde est le plus proche de RIPPLE_NORM dans la direction angle (espace du
+// réseau), orientée dans le sens du vent windQ : versant au vent en pente douce, face sous le vent raide. Renvoie
+// (hauteur dans [0, 1], gradient par mètre de la hauteur en m)
+vec3 rippleSet(vec2 q, mat2 jacobian, float angle, vec2 windQ, vec3 warp) {
+  vec2 d = round(RIPPLE_NORM * vec2(cos(angle), sin(angle)));
   d *= sign(dot(d, windQ) + 1e-6);
   float phase = 6.2831853 * (dot(q, d) + warp.x);
   float skewed = phase + 0.5 * sin(phase);
   float h = 0.5 - 0.5 * sin(skewed);
   float dh = -0.5 * cos(skewed) * (1.0 + 0.5 * cos(phase)) * 6.2831853;
-  return vec3(h, RIPPLE_HEIGHT * wavelength * dh * (transpose(jacobian) * d + warp.yz));
+  return vec3(h, RIPPLE_HEIGHT * rippleWavelength() * dh * (transpose(jacobian) * d + warp.yz));
 }
 
-// Rides éoliennes, crêtes perpendiculaires au vent local des dunes, sinueuses, interrompues par plaques. De la
-// direction du réseau la plus proche à la suivante, la bascule suit une ligne irrégulière où les crêtes se raccordent
-// en Y, comme les défauts des vraies rides : mêlées, les deux familles se croiseraient en damier.
-// Renvoie (hauteur dans [0, 1], pente) pondérées par fade
+// Rides éoliennes, crêtes perpendiculaires au vent local des dunes, sinueuses, plus ou moins marquées par plaques.
+// D'une direction du réseau à la suivante, les deux familles se relaient sur une bande étroite et irrégulière : la
+// plus haute l'emporte (maximum adouci), si bien que leurs crêtes se raccordent en Y, comme les défauts des vraies
+// rides ; mêlées par une moyenne, elles se croiseraient en damier.
+// Renvoie (hauteur centrée, dans [-0,5, 0,5], pente) pondérées par fade
 vec3 sandRipples(vec2 x, float fade) {
   mat2 jacobian;
-  vec2 q = octaveSpace(x, RIPPLE_OCTAVE, jacobian);
+  vec2 q = octaveSpace(x, RIPPLE_GRID_OCTAVE, jacobian);
   vec2 windQ = jacobian * duneWind(x);
-  float angle = atan(windQ.y, windQ.x);
-  if (angle < 0.0) angle += 3.1415927;
-  int k = 0;
-  for (int i = 1; i < 8; i++) if (angle >= RIPPLE_ANGLES[i]) k = i;
-  float between = (angle - RIPPLE_ANGLES[k]) / (RIPPLE_ANGLES[k + 1] - RIPPLE_ANGLES[k]);
-  vec2 d = between + 0.3 * octaveNoise(x, RIPPLE_OCTAVE - 4, vec2(-8.1, 3.7)).x < 0.5 ? RIPPLE_DIRS[k]
-    : k == 7 ? -RIPPLE_DIRS[0] : RIPPLE_DIRS[k + 1];
-  float wavelength = uScale / exp2(float(RIPPLE_OCTAVE)) / 3.0;
-  vec3 warp = 0.6 * octaveNoise(x, RIPPLE_OCTAVE - 2, vec2(4.1, -7.3)) + 0.25 * octaveNoise(x, RIPPLE_OCTAVE - 1, vec2(-3.3, 1.9));
-  vec3 ripple = rippleSet(q, jacobian, d, windQ, warp, wavelength);
-  float patches = smoothstep(-0.7, 0.3, octaveNoise(x, RIPPLE_OCTAVE - 3, vec2(-2.9, 5.7)).x);
-  return vec3(ripple.x, ripple.yz * patches) * fade;
+  float steps = atan(windQ.y, windQ.x) / RIPPLE_STEP + 0.6 * octaveNoise(x, RIPPLE_OCTAVE - 4, vec2(-8.1, 3.7)).x
+    + 0.25 * octaveNoise(x, RIPPLE_OCTAVE - 2, vec2(6.2, -1.4)).x;
+  float k = floor(steps);
+  float relay = smoothstep(0.35, 0.65, steps - k);
+  vec3 warp = 0.6 * octaveNoise(x, RIPPLE_OCTAVE - 2, vec2(4.1, -7.3)) + 0.25 * octaveNoise(x, RIPPLE_OCTAVE - 1, vec2(-3.3, 1.9))
+    + 0.1 * octaveNoise(x, RIPPLE_OCTAVE, vec2(7.7, 2.2));
+  vec3 a = rippleSet(q, jacobian, k * RIPPLE_STEP, windQ, warp);
+  vec3 b = rippleSet(q, jacobian, (k + 1.0) * RIPPLE_STEP, windQ, warp);
+  // Maximum adouci de a - relay et b - (1 - relay)
+  float gap = a.x - b.x + 1.0 - 2.0 * relay;
+  float pick = 0.5 + 0.5 * gap / sqrt(gap * gap + 0.04);
+  vec3 ripple = mix(b, a, pick);
+  // Rides nettes par endroits, à peine esquissées ailleurs, et crêtes plus ou moins hautes le long de leur tracé
+  float strength = 0.2 + 0.8 * smoothstep(-0.6, 0.6, octaveNoise(x, RIPPLE_OCTAVE - 3, vec2(-2.9, 5.7)).x
+    + 0.4 * octaveNoise(x, RIPPLE_OCTAVE - 5, vec2(3.4, 8.8)).x + 0.35 * octaveNoise(x, RIPPLE_OCTAVE - 1, vec2(-6.1, -4.4)).x);
+  return vec3(ripple.x - 0.5, ripple.yz) * strength * fade;
 }
 
 // Touffes d'herbe de 1,5 m à 40 cm : bosses arrondies sur un sol plus plat. Renvoie (hauteur relative, environ dans
@@ -299,7 +310,7 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   }
 
   // Sable : plages des côtes marines (pas des lacs), de largeur variable, et tout le plat en désert
-  float coastal = 1.0 - smoothstep(0.22, 0.3, c.x);
+  float coastal = seaCoast(c.x);
   float beachTop = uWater + 1.0 + 3.5 * (0.5 + 0.5 * flatVariation);
   float beach = coastal * (1.0 - smoothstep(beachTop - 1.0, beachTop, p.y));
   float sand = max(beach, desert * lowland(c.x)) * smoothstep(0.6, 0.85, mix(s.normal.y, s.coarse.y, 0.5));
@@ -307,12 +318,11 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float sandVariation = flatVariation + 0.6 * vegetationNoise(p.xz, vec2(27.7, -15.1), 7, 10, 0.7, depthFootprint);
   vec3 sandColor = mix(vec3(0.76, 0.63, 0.41), vec3(0.68, 0.38, 0.16), desert) * (0.94 + 0.14 * sandVariation);
   // Rides, plus rares sur les faces d'avalanche ; les crêtes, de grain plus grossier, sont un peu plus claires
-  float rippleWavelength = uScale / exp2(float(RIPPLE_OCTAVE)) / 3.0;
-  float rippleFade = smoothstep(3.0 * depthFootprint, 6.0 * depthFootprint, rippleWavelength);
+  float rippleFade = smoothstep(3.0 * depthFootprint, 6.0 * depthFootprint, rippleWavelength());
   micro *= 1.0 - sand;
   if (sand > 0.0 && rippleFade > 0.0) {
     vec3 ripple = sandRipples(p.xz, rippleFade * mix(0.4, 1.0, smoothstep(0.8, 0.9, s.normal.y)));
-    sandColor *= 1.0 + 0.08 * (ripple.x - 0.5 * rippleFade);
+    sandColor *= 1.0 + 0.06 * ripple.x;
     micro += sand * ripple.yz;
   }
   col = mix(col, sandColor, sand);
@@ -327,8 +337,15 @@ vec3 terrainAlbedo(vec3 p, inout Surface s, float t) {
   float sunward = dot(slopeDir, normalize(uSunDir.xz + vec2(1e-4))) / max(length(slopeDir), 0.05)
     * smoothstep(0.05, 0.3, length(slopeDir));
   float snowLine = uSnow + 120.0 * sunward + 400.0 * desert;
-  float hold = mix(s.normal.y, s.coarse.y, 0.85) - 0.05 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1);
-  float snow = smoothstep(snowLine - 150.0, snowLine + 150.0, p.y + variation * 300.0) * smoothstep(0.5, 0.7, hold);
+  // Bords nets, découpés par un bruit 3D : sur ces champs lisses (normale des grandes formes, bruit 2D étiré sur les
+  // pentes), une transition large mêlait neige et roche en traînées grises floues. La normale fine ne fait qu'ôter de
+  // la neige (affleurements) : elle n'en pose pas en réseau sur les parois
+  float snow = 0.0;
+  if (p.y + 250.0 * abs(steepVariation) + 80.0 > snowLine) {
+    float breakup = rockStain(p + vec3(57.3, 0.0, -31.9), footprint);
+    float hold = min(s.coarse.y, s.normal.y + 0.12) - 0.05 * s.cavity + min((p.y - snowLine) * 0.0002, 0.1) + 0.1 * breakup;
+    snow = smoothstep(snowLine - 15.0, snowLine + 15.0, p.y + 250.0 * steepVariation + 60.0 * breakup) * smoothstep(0.6, 0.63, hold);
+  }
   // Sastrugi sur la neige peu pentue
   if (snow > 0.0) {
     micro = mix(micro, smoothstep(0.75, 0.9, s.coarse.y) * sastrugi(p.xz, depthFootprint), snow);
@@ -387,12 +404,15 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
   // Reflet allégé : détail plus grossier, budget de pas et ombres réduits, invisibles une fois mêlés au Fresnel.
   // En aperçu, plus grossier encore et sans ombre portée
   bool preview = uPreview > 0.5;
-  float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, preview ? 3.0 : 2.0, preview ? 120 : 200);
-  // Un reflet rasant épuise ses pas au-dessus du fond marin : il reflète le ciel
-  if (tr > 0.0 && terrain(p.xz + r.xz * tr, lod(t + tr)) < uWater) tr = -1.0;
+  float lodScale = preview ? 3.0 : 2.0;
+  float tr = march(p + vec3(0.0, 0.05, 0.0), r, 0.5, TMAX, t, lodScale, preview ? 120 : 200);
+  // Un reflet rasant épuise ses pas au-dessus du fond marin, loin du relief : il reflète le ciel. Au bord, il touche
+  // la berge, ou part de sous la berge plus grossière du reflet : il la montre, sans quoi la rive aurait un liseré de ciel
+  vec3 hit = rayPoint(p, r, tr);
+  float tl = (t + tr) * lodScale;
+  if (tr > 0.0 && terrain(hit.xz, lod(tl)) < min(uWater, hit.y - tl * lodPixelAngle)) tr = -1.0;
   vec3 reflection = sky(r, 0.0);
   if (tr > 0.0) {
-    vec3 hit = rayPoint(p, r, tr);
     reflection = applyFog(shadeTerrain(hit, t + tr, preview ? 0 : 24), p, hit, 0.0);
   }
   float shadow = preview ? 1.0 : softShadow(p, uSunDir, t, 16);
@@ -406,16 +426,19 @@ vec3 shadeWater(vec3 p, vec3 rd, float t) {
   float sunFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfway, -rd), 0.0), 5.0);
   vec3 specular = sunCol * SUN_IRRADIANCE * shadow * distribution * sunFresnel / max(4.0 * cosView, 0.1);
 
-  // Ce qu'on voit sous la surface : fond de sable plus ou moins absorbé (le rouge disparaît le premier), puis
-  // la couleur propre de l'eau profonde
+  // Ce qu'on voit sous la surface : fond plus ou moins absorbé (le rouge disparaît le premier), puis la couleur
+  // propre de l'eau profonde. Sable clair sur les côtes marines ; vase sombre comme la rive mouillée dans les lacs et
+  // les rivières, dont le bord peu profond, plus fin qu'un pixel au loin, ferait sinon un liseré clair
   vec3 light = sunCol * SUN_IRRADIANCE * max(uSunDir.y, 0.0) * shadow + skyIrradiance(uWater, vec3(0.0, 1.0, 0.0));
   float depth = max(uWater - terrain(p.xz, lod(t)), 0.0);
   vec3 absorption = exp(-vec3(0.35, 0.09, 0.06) * depth * 1.6);
-  vec3 below = vec3(0.4, 0.35, 0.25) * light * absorption + vec3(0.008, 0.03, 0.04) * light * (1.0 - absorption);
+  float sea = seaCoast(climate(p.xz).x);
+  vec3 bed = mix(vec3(0.07, 0.07, 0.045), vec3(0.4, 0.35, 0.25), sea);
+  vec3 below = bed * light * absorption + vec3(0.008, 0.03, 0.04) * light * (1.0 - absorption);
 
-  // Écume sur les premiers décimètres de profondeur, en traînées, effacée sous la taille d'un pixel
+  // Écume des côtes marines sur les premiers décimètres de profondeur, en traînées, effacée sous la taille d'un pixel
   float foamNoise = gradientNoise3(rockSpace(p, 4) + 0.71, uRockCell[4]);
-  float foam = (1.0 - smoothstep(0.0, 0.7, depth)) * mix(0.35, smoothstep(-0.1, 0.5, foamNoise), rockFade(4, t * lodPixelAngle));
+  float foam = sea * (1.0 - smoothstep(0.0, 0.7, depth)) * mix(0.35, smoothstep(-0.1, 0.5, foamNoise), rockFade(4, t * lodPixelAngle));
 
   vec3 col = mix(below, reflection, fresnel) + specular;
   return mix(col, vec3(0.75) * light, foam * 0.8);

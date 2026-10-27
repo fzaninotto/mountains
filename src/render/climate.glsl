@@ -47,6 +47,11 @@ float lowland(float level) {
   return 1.0 - smoothstep(0.3, 0.45, level);
 }
 
+// 1 sur les côtes marines (plages, écume), 0 au bord des lacs et des rivières des terres
+float seaCoast(float level) {
+  return 1.0 - smoothstep(0.22, 0.3, level);
+}
+
 // Les dunes n'existent que dans les zones arides basses : ni en mer, ni en relief
 float duneWeight(float level, float desert) {
   return desert * smoothstep(0.12, 0.2, level) * lowland(level);
